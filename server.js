@@ -188,12 +188,28 @@ client.on('ready', async () => {
     currentQR = null;
     io.emit('ready');
 
-    // Load existing chats
+    // Load existing chats and their message history
     try {
         const chats = await client.getChats();
-        for (const chat of chats.slice(0, 50)) {
+        console.log(`Loading ${Math.min(chats.length, 30)} chats...`);
+
+        for (const chat of chats.slice(0, 30)) {
             await saveChat(chat);
+
+            // Fetch message history for each chat
+            try {
+                const messages = await chat.fetchMessages({ limit: 50 });
+                console.log(`  ${chat.name || chat.id.user}: ${messages.length} messages`);
+
+                for (const msg of messages) {
+                    await saveMessage(msg);
+                }
+            } catch (e) {
+                console.error(`  Error fetching messages for ${chat.name}:`, e.message);
+            }
         }
+
+        console.log('Chat history loaded!');
         io.emit('chats_loaded');
     } catch (err) {
         console.error('Error loading chats:', err);
