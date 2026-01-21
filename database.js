@@ -87,6 +87,11 @@ setInterval(() => {
     saveDatabase();
 }, 30000);
 
+// Helper to convert undefined to null (sql.js doesn't handle undefined)
+function sanitize(val) {
+    return val === undefined ? null : val;
+}
+
 // Database operations
 function insertChat(id, name, isGroup, profilePic, lastMessageTime) {
     if (!db) return;
@@ -94,7 +99,7 @@ function insertChat(id, name, isGroup, profilePic, lastMessageTime) {
         INSERT OR REPLACE INTO chats (id, name, is_group, profile_pic, last_message_time, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([id, name, isGroup ? 1 : 0, profilePic, lastMessageTime, Date.now()]);
+    stmt.run([sanitize(id), sanitize(name), isGroup ? 1 : 0, sanitize(profilePic), sanitize(lastMessageTime), Date.now()]);
     stmt.free();
     saveDatabase();
 }
@@ -105,7 +110,7 @@ function insertContact(id, number, name, pushname, profilePic, isBusiness) {
         INSERT OR REPLACE INTO contacts (id, number, name, pushname, profile_pic, is_business, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([id, number, name, pushname, profilePic, isBusiness ? 1 : 0, Date.now()]);
+    stmt.run([sanitize(id), sanitize(number), sanitize(name), sanitize(pushname), sanitize(profilePic), isBusiness ? 1 : 0, Date.now()]);
     stmt.free();
     saveDatabase();
 }
@@ -117,7 +122,7 @@ function insertMessage(id, chatId, senderId, senderName, body, type, timestamp, 
         (id, chat_id, sender_id, sender_name, body, type, timestamp, is_forwarded, is_from_me, has_media, media_path, media_mimetype, raw_data, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([id, chatId, senderId, senderName, body, type, timestamp, isForwarded ? 1 : 0, isFromMe ? 1 : 0, hasMedia ? 1 : 0, mediaPath, mediaMimetype, rawData, Date.now()]);
+    stmt.run([sanitize(id), sanitize(chatId), sanitize(senderId), sanitize(senderName), sanitize(body), sanitize(type), sanitize(timestamp), isForwarded ? 1 : 0, isFromMe ? 1 : 0, hasMedia ? 1 : 0, sanitize(mediaPath), sanitize(mediaMimetype), sanitize(rawData), Date.now()]);
     stmt.free();
     saveDatabase();
 }
