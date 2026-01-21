@@ -24,9 +24,14 @@ if (!fs.existsSync(MEDIA_DIR)) {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(MEDIA_DIR));
 
-// Initialize WhatsApp client
+// Session directory for persistent login
+const SESSION_DIR = path.join(__dirname, '.wwebjs_auth');
+
+// Initialize WhatsApp client with persistent session
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({
+        dataPath: SESSION_DIR
+    }),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -194,23 +199,14 @@ client.on('disconnected', (reason) => {
     io.emit('disconnected', reason);
 });
 
-// Incoming message
-client.on('message', async (message) => {
-    console.log('New message received');
+// Handle ALL messages (both sent and received) via message_create
+client.on('message_create', async (message) => {
+    const direction = message.fromMe ? 'SENT' : 'RECEIVED';
+    console.log(`Message ${direction}: ${message.body?.substring(0, 50) || '[media]'}`);
+
     const savedMessage = await saveMessage(message);
     if (savedMessage) {
         io.emit('new_message', savedMessage);
-    }
-});
-
-// Message created (includes sent messages)
-client.on('message_create', async (message) => {
-    if (message.fromMe) {
-        console.log('Sent message detected');
-        const savedMessage = await saveMessage(message);
-        if (savedMessage) {
-            io.emit('new_message', savedMessage);
-        }
     }
 });
 
