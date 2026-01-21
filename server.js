@@ -106,18 +106,35 @@ async function saveContact(contact) {
 async function saveMessage(message) {
     try {
         const chat = await message.getChat();
-        const contact = await message.getContact();
+
+        // For sent messages, contact info might not be available the same way
+        let senderId, senderName;
+        if (message.fromMe) {
+            // For sent messages, use 'me' as sender
+            senderId = 'me';
+            senderName = 'Me';
+        } else {
+            // For received messages, get contact info
+            try {
+                const contact = await message.getContact();
+                senderId = contact.id._serialized;
+                senderName = contact.pushname || contact.name || contact.number || 'Unknown';
+                await saveContact(contact);
+            } catch (e) {
+                senderId = message.from || 'unknown';
+                senderName = 'Unknown';
+            }
+        }
 
         await saveChat(chat);
-        await saveContact(contact);
 
         const mediaInfo = await saveMedia(message);
 
         db.insertMessage(
             message.id._serialized,
             chat.id._serialized,
-            contact.id._serialized,
-            contact.pushname || contact.name || contact.number,
+            senderId,
+            senderName,
             message.body,
             message.type,
             message.timestamp * 1000,
@@ -142,8 +159,8 @@ async function saveMessage(message) {
             id: message.id._serialized,
             chatId: chat.id._serialized,
             chatName: chat.name || chat.id.user,
-            senderId: contact.id._serialized,
-            senderName: contact.pushname || contact.name || contact.number,
+            senderId: senderId,
+            senderName: senderName,
             body: message.body,
             type: message.type,
             timestamp: message.timestamp * 1000,
