@@ -64,10 +64,10 @@ async function saveChat(chat) {
             profilePic = await chat.getContact().then(c => c.getProfilePicUrl());
         } catch (e) {}
 
-        db.insertChat.run(
+        db.insertChat(
             chat.id._serialized,
             chat.name || chat.id.user,
-            chat.isGroup ? 1 : 0,
+            chat.isGroup,
             profilePic,
             Date.now()
         );
@@ -84,13 +84,13 @@ async function saveContact(contact) {
             profilePic = await contact.getProfilePicUrl();
         } catch (e) {}
 
-        db.insertContact.run(
+        db.insertContact(
             contact.id._serialized,
             contact.number,
             contact.name || null,
             contact.pushname || null,
             profilePic,
-            contact.isBusiness ? 1 : 0
+            contact.isBusiness
         );
     } catch (err) {
         console.error('Error saving contact:', err);
@@ -108,7 +108,7 @@ async function saveMessage(message) {
 
         const mediaInfo = await saveMedia(message);
 
-        db.insertMessage.run(
+        db.insertMessage(
             message.id._serialized,
             chat.id._serialized,
             contact.id._serialized,
@@ -116,19 +116,19 @@ async function saveMessage(message) {
             message.body,
             message.type,
             message.timestamp * 1000,
-            message.isForwarded ? 1 : 0,
-            message.fromMe ? 1 : 0,
-            message.hasMedia ? 1 : 0,
+            message.isForwarded,
+            message.fromMe,
+            message.hasMedia,
             mediaInfo.path,
             mediaInfo.mimetype,
             JSON.stringify(message)
         );
 
         // Update chat last message time
-        db.insertChat.run(
+        db.insertChat(
             chat.id._serialized,
             chat.name || chat.id.user,
-            chat.isGroup ? 1 : 0,
+            chat.isGroup,
             null,
             message.timestamp * 1000
         );
@@ -218,7 +218,7 @@ client.on('message_create', async (message) => {
 client.on('message_revoke_everyone', async (message, revokedMsg) => {
     console.log('Message deleted detected');
     if (revokedMsg) {
-        db.markMessageDeleted.run(Date.now(), revokedMsg.id._serialized);
+        db.markMessageDeleted(revokedMsg.id._serialized, Date.now());
         io.emit('message_deleted', {
             id: revokedMsg.id._serialized,
             deletedAt: Date.now()
@@ -233,7 +233,7 @@ app.get('/api/status', (req, res) => {
 
 app.get('/api/chats', (req, res) => {
     try {
-        const chats = db.getChats.all();
+        const chats = db.getChats();
         res.json(chats);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -242,7 +242,7 @@ app.get('/api/chats', (req, res) => {
 
 app.get('/api/chats/:chatId/messages', (req, res) => {
     try {
-        const messages = db.getMessages.all(req.params.chatId);
+        const messages = db.getMessages(req.params.chatId);
         res.json(messages);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -251,7 +251,7 @@ app.get('/api/chats/:chatId/messages', (req, res) => {
 
 app.get('/api/deleted', (req, res) => {
     try {
-        const messages = db.getDeletedMessages.all();
+        const messages = db.getDeletedMessages();
         res.json(messages);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -261,7 +261,7 @@ app.get('/api/deleted', (req, res) => {
 app.get('/api/search', (req, res) => {
     try {
         const query = req.query.q || '';
-        const messages = db.searchMessages.all(`%${query}%`);
+        const messages = db.searchMessages(query);
         res.json(messages);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -284,13 +284,20 @@ io.on('connection', (socket) => {
 });
 
 // Start server
-server.listen(PORT, () => {
-    console.log(`\n========================================`);
-    console.log(`  WhatsApp Archive Dashboard`);
-    console.log(`  Open: http://localhost:${PORT}`);
-    console.log(`========================================\n`);
+async function start() {
+    // Initialize database first
+    await db.initDatabase();
 
-    // Initialize WhatsApp client
-    console.log('Initializing WhatsApp client...');
-    client.initialize();
-});
+    server.listen(PORT, () => {
+        console.log(`\n========================================`);
+        console.log(`  WhatsApp Archive Dashboard`);
+        console.log(`  Open: http://localhost:${PORT}`);
+        console.log(`========================================\n`);
+
+        // Initialize WhatsApp client
+        console.log('Initializing WhatsApp client...');
+        client.initialize();
+    });
+}
+
+start().catch(console.error);
