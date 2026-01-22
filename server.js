@@ -6,6 +6,7 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
+const cookieParser = require('cookie-parser');
 const db = require('./database');
 
 const app = express();
@@ -15,14 +16,55 @@ const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 const MEDIA_DIR = path.join(__dirname, 'media');
 
+// Message queue for handling concurrent sends
+const messageQueue = [];
+let isProcessingQueue = false;
+
 // Ensure media directory exists
 if (!fs.existsSync(MEDIA_DIR)) {
     fs.mkdirSync(MEDIA_DIR, { recursive: true });
 }
 
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
+// Middleware
+app.use(express.json());
+app.use(cookieParser());
 app.use('/media', express.static(MEDIA_DIR));
+
+// Auth middleware
+function authMiddleware(req, res, next) {
+    const sessionId = req.cookies.session;
+    const user = db.verifySession(sessionId);
+    if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.user = user;
+    next();
+}
+
+function adminMiddleware(req, res, next) {
+    if (!req.user.is_admin) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+}
+
+// Serve login page for unauthenticated users
+app.use((req, res, next) => {
+    // Skip auth check for static files, API auth routes, and login page
+    if (req.path.startsWith('/api/auth') || req.path === '/login.html' || req.path.startsWith('/media')) {
+        return next();
+    }
+
+    const sessionId = req.cookies.session;
+    const user = db.verifySession(sessionId);
+
+    if (!user && !req.path.startsWith('/api/')) {
+        return res.redirect('/login.html');
+    }
+    next();
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Session directory for persistent login
 const SESSION_DIR = path.join(__dirname, '.wwebjs_auth');
@@ -260,21 +302,102 @@ client.on('message_revoke_everyone', async (message, revokedMsg) => {
     }
 });
 
-// API Routes
+// ============ AUTH ROUTES ============
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+    const user = db.verifyUser(username, password);
+
+    if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const sessionId = db.createSession(user.id);
+    res.cookie('session', sessionId, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 });
+    res.json({ success: true, user: { id: user.id, username: user.username, is_admin: user.is_admin } });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    const sessionId = req.cookies.session;
+    if (sessionId) {
+        db.deleteSession(sessionId);
+    }
+    res.clearCookie('session');
+    res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+    const sessionId = req.cookies.session;
+    const user = db.verifySession(sessionId);
+    if (!user) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+    res.json({ user: { id: user.id, username: user.username, is_admin: user.is_admin } });
+});
+
+// ============ ADMIN ROUTES ============
+app.get('/api/admin/users', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const users = db.getUsers();
+        res.json(users);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/admin/users', authMiddleware, adminMiddleware, (req, res) => {
+    const { username, password, isAdmin } = req.body;
+    const result = db.createUser(username, password, isAdmin);
+    if (result.success) {
+        res.json({ success: true });
+    } else {
+        res.status(400).json({ error: result.error });
+    }
+});
+
+app.delete('/api/admin/users/:userId', authMiddleware, adminMiddleware, (req, res) => {
+    const userId = parseInt(req.params.userId);
+    if (userId === req.user.id) {
+        return res.status(400).json({ error: 'Cannot delete yourself' });
+    }
+    db.deleteUser(userId);
+    res.json({ success: true });
+});
+
+app.get('/api/admin/users/:userId/permissions', authMiddleware, adminMiddleware, (req, res) => {
+    const userId = parseInt(req.params.userId);
+    const permissions = db.getUserPermissions(userId);
+    res.json(permissions);
+});
+
+app.post('/api/admin/users/:userId/permissions', authMiddleware, adminMiddleware, (req, res) => {
+    const userId = parseInt(req.params.userId);
+    const { chatId, canRead, canSend } = req.body;
+    db.setUserPermission(userId, chatId, canRead, canSend);
+    res.json({ success: true });
+});
+
+app.delete('/api/admin/users/:userId/permissions/:chatId', authMiddleware, adminMiddleware, (req, res) => {
+    const userId = parseInt(req.params.userId);
+    const chatId = decodeURIComponent(req.params.chatId);
+    db.removeUserPermission(userId, chatId);
+    res.json({ success: true });
+});
+
+// ============ API ROUTES ============
 app.get('/api/status', (req, res) => {
     res.json({ ready: isReady, qr: !isReady ? currentQR : null });
 });
 
-app.get('/api/chats', (req, res) => {
+app.get('/api/chats', authMiddleware, (req, res) => {
     try {
-        const chats = db.getChats();
+        const chats = db.getUserChats(req.user.id, req.user.is_admin);
         res.json(chats);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.get('/api/chats/:chatId/messages', (req, res) => {
+app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     try {
         const messages = db.getMessages(req.params.chatId);
         res.json(messages);
@@ -283,7 +406,7 @@ app.get('/api/chats/:chatId/messages', (req, res) => {
     }
 });
 
-app.get('/api/deleted', (req, res) => {
+app.get('/api/deleted', authMiddleware, (req, res) => {
     try {
         const messages = db.getDeletedMessages();
         res.json(messages);
@@ -292,7 +415,7 @@ app.get('/api/deleted', (req, res) => {
     }
 });
 
-app.get('/api/search', (req, res) => {
+app.get('/api/search', authMiddleware, (req, res) => {
     try {
         const query = req.query.q || '';
         const messages = db.searchMessages(query);
@@ -302,18 +425,153 @@ app.get('/api/search', (req, res) => {
     }
 });
 
-// Socket.io connection
+// ============ SEND MESSAGE ============
+async function processMessageQueue() {
+    if (isProcessingQueue || messageQueue.length === 0) return;
+
+    isProcessingQueue = true;
+
+    while (messageQueue.length > 0) {
+        const { chatId, message, resolve, reject } = messageQueue.shift();
+
+        try {
+            // Get the chat
+            const chat = await client.getChatById(chatId);
+
+            // Send typing indicator
+            await chat.sendStateTyping();
+
+            // Calculate typing delay based on message length (50ms per character, min 1s, max 5s)
+            const typingDelay = Math.min(Math.max(message.length * 50, 1000), 5000);
+            await new Promise(r => setTimeout(r, typingDelay));
+
+            // Send the message
+            const sentMessage = await chat.sendMessage(message);
+
+            // Clear typing state
+            await chat.clearState();
+
+            resolve(sentMessage);
+        } catch (err) {
+            reject(err);
+        }
+
+        // Add delay between messages from queue (500ms)
+        if (messageQueue.length > 0) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+
+    isProcessingQueue = false;
+}
+
+app.post('/api/chats/:chatId/send', authMiddleware, async (req, res) => {
+    const chatId = req.params.chatId;
+    const { message } = req.body;
+
+    if (!isReady) {
+        return res.status(503).json({ error: 'WhatsApp not connected' });
+    }
+
+    if (!message || message.trim() === '') {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+
+    // Check permission
+    if (!db.canUserSendToChat(req.user.id, chatId, req.user.is_admin)) {
+        return res.status(403).json({ error: 'No permission to send to this chat' });
+    }
+
+    try {
+        // Add to queue and wait for result
+        const sentMessage = await new Promise((resolve, reject) => {
+            messageQueue.push({ chatId, message: message.trim(), resolve, reject });
+            processMessageQueue();
+        });
+
+        res.json({ success: true, messageId: sentMessage.id._serialized });
+    } catch (err) {
+        console.error('Error sending message:', err);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
+// Typing indicator endpoint
+app.post('/api/chats/:chatId/typing', authMiddleware, async (req, res) => {
+    const chatId = req.params.chatId;
+    const { typing } = req.body;
+
+    if (!isReady) {
+        return res.status(503).json({ error: 'WhatsApp not connected' });
+    }
+
+    try {
+        const chat = await client.getChatById(chatId);
+        if (typing) {
+            await chat.sendStateTyping();
+        } else {
+            await chat.clearState();
+        }
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Socket.io connection with authentication
+io.use((socket, next) => {
+    const cookies = socket.handshake.headers.cookie;
+    if (cookies) {
+        const sessionMatch = cookies.match(/session=([^;]+)/);
+        if (sessionMatch) {
+            const user = db.verifySession(sessionMatch[1]);
+            if (user) {
+                socket.user = user;
+                return next();
+            }
+        }
+    }
+    next(new Error('Authentication required'));
+});
+
 io.on('connection', (socket) => {
-    console.log('Dashboard client connected');
+    console.log(`User ${socket.user.username} connected`);
+
+    // Join user-specific room
+    socket.join(`user_${socket.user.id}`);
 
     // Send current status
-    socket.emit('status', { ready: isReady });
-    if (!isReady && currentQR) {
+    socket.emit('status', { ready: isReady, user: socket.user });
+    if (!isReady && currentQR && socket.user.is_admin) {
         socket.emit('qr', currentQR);
     }
 
+    // Handle typing events from client
+    socket.on('start_typing', async (chatId) => {
+        if (!isReady) return;
+        if (!db.canUserSendToChat(socket.user.id, chatId, socket.user.is_admin)) return;
+
+        try {
+            const chat = await client.getChatById(chatId);
+            await chat.sendStateTyping();
+        } catch (err) {
+            console.error('Typing error:', err);
+        }
+    });
+
+    socket.on('stop_typing', async (chatId) => {
+        if (!isReady) return;
+
+        try {
+            const chat = await client.getChatById(chatId);
+            await chat.clearState();
+        } catch (err) {
+            console.error('Clear typing error:', err);
+        }
+    });
+
     socket.on('disconnect', () => {
-        console.log('Dashboard client disconnected');
+        console.log(`User ${socket.user.username} disconnected`);
     });
 });
 

@@ -68,6 +68,51 @@ async function initDatabase() {
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_deleted ON messages(is_deleted)`);
 
+    // Users table
+    db.run(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
+            created_at INTEGER
+        )
+    `);
+
+    // User chat permissions
+    db.run(`
+        CREATE TABLE IF NOT EXISTS user_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            chat_id TEXT NOT NULL,
+            can_read INTEGER DEFAULT 1,
+            can_send INTEGER DEFAULT 0,
+            created_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            UNIQUE(user_id, chat_id)
+        )
+    `);
+
+    // Sessions table
+    db.run(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at INTEGER,
+            expires_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    // Create default admin if not exists
+    const adminExists = db.exec("SELECT id FROM users WHERE username = 'admin'");
+    if (adminExists.length === 0 || adminExists[0].values.length === 0) {
+        const crypto = require('crypto');
+        const defaultPassword = crypto.createHash('sha256').update('admin123').digest('hex');
+        db.run(`INSERT INTO users (username, password, is_admin, created_at) VALUES ('admin', '${defaultPassword}', 1, ${Date.now()})`);
+        console.log('Default admin created: admin / admin123');
+    }
+
     saveDatabase();
     console.log('Database initialized');
     return db;
@@ -197,6 +242,172 @@ function resultsToObjects(results) {
     });
 }
 
+// User management
+function createUser(username, password, isAdmin = false) {
+    if (!db) return null;
+    const crypto = require('crypto');
+    const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+    try {
+        const stmt = db.prepare(`INSERT INTO users (username, password, is_admin, created_at) VALUES (?, ?, ?, ?)`);
+        stmt.run([username, hashedPassword, isAdmin ? 1 : 0, Date.now()]);
+        stmt.free();
+        saveDatabase();
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: 'Username already exists' };
+    }
+}
+
+function verifyUser(username, password) {
+    if (!db) return null;
+    const crypto = require('crypto');
+    const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+    const stmt = db.prepare(`SELECT id, username, is_admin FROM users WHERE username = ? AND password = ?`);
+    stmt.bind([username, hashedPassword]);
+    if (stmt.step()) {
+        const user = stmt.getAsObject();
+        stmt.free();
+        return user;
+    }
+    stmt.free();
+    return null;
+}
+
+function getUsers() {
+    if (!db) return [];
+    const results = db.exec(`SELECT id, username, is_admin, created_at FROM users ORDER BY created_at DESC`);
+    return resultsToObjects(results);
+}
+
+function deleteUser(userId) {
+    if (!db) return;
+    db.run(`DELETE FROM user_permissions WHERE user_id = ${userId}`);
+    db.run(`DELETE FROM sessions WHERE user_id = ${userId}`);
+    db.run(`DELETE FROM users WHERE id = ${userId}`);
+    saveDatabase();
+}
+
+function updateUserPassword(userId, newPassword) {
+    if (!db) return;
+    const crypto = require('crypto');
+    const hashedPassword = crypto.createHash('sha256').update(newPassword).digest('hex');
+    const stmt = db.prepare(`UPDATE users SET password = ? WHERE id = ?`);
+    stmt.run([hashedPassword, userId]);
+    stmt.free();
+    saveDatabase();
+}
+
+// Session management
+function createSession(userId) {
+    if (!db) return null;
+    const crypto = require('crypto');
+    const sessionId = crypto.randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+    const stmt = db.prepare(`INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`);
+    stmt.run([sessionId, userId, Date.now(), expiresAt]);
+    stmt.free();
+    saveDatabase();
+    return sessionId;
+}
+
+function verifySession(sessionId) {
+    if (!db || !sessionId) return null;
+    const stmt = db.prepare(`
+        SELECT u.id, u.username, u.is_admin
+        FROM sessions s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.id = ? AND s.expires_at > ?
+    `);
+    stmt.bind([sessionId, Date.now()]);
+    if (stmt.step()) {
+        const user = stmt.getAsObject();
+        stmt.free();
+        return user;
+    }
+    stmt.free();
+    return null;
+}
+
+function deleteSession(sessionId) {
+    if (!db) return;
+    db.run(`DELETE FROM sessions WHERE id = '${sessionId}'`);
+    saveDatabase();
+}
+
+// Permission management
+function setUserPermission(userId, chatId, canRead, canSend) {
+    if (!db) return;
+    const stmt = db.prepare(`
+        INSERT OR REPLACE INTO user_permissions (user_id, chat_id, can_read, can_send, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run([userId, chatId, canRead ? 1 : 0, canSend ? 1 : 0, Date.now()]);
+    stmt.free();
+    saveDatabase();
+}
+
+function removeUserPermission(userId, chatId) {
+    if (!db) return;
+    const stmt = db.prepare(`DELETE FROM user_permissions WHERE user_id = ? AND chat_id = ?`);
+    stmt.run([userId, chatId]);
+    stmt.free();
+    saveDatabase();
+}
+
+function getUserPermissions(userId) {
+    if (!db) return [];
+    const stmt = db.prepare(`
+        SELECT p.*, c.name as chat_name
+        FROM user_permissions p
+        LEFT JOIN chats c ON p.chat_id = c.id
+        WHERE p.user_id = ?
+    `);
+    stmt.bind([userId]);
+    const rows = [];
+    while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+}
+
+function getUserChats(userId, isAdmin) {
+    if (!db) return [];
+    if (isAdmin) {
+        return getChats(); // Admin sees all chats
+    }
+    const stmt = db.prepare(`
+        SELECT c.*, p.can_read, p.can_send,
+               (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count,
+               (SELECT body FROM messages m WHERE m.chat_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
+        FROM chats c
+        JOIN user_permissions p ON c.id = p.chat_id
+        WHERE p.user_id = ? AND p.can_read = 1
+        ORDER BY c.last_message_time DESC
+    `);
+    stmt.bind([userId]);
+    const rows = [];
+    while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+}
+
+function canUserSendToChat(userId, chatId, isAdmin) {
+    if (isAdmin) return true;
+    if (!db) return false;
+    const stmt = db.prepare(`SELECT can_send FROM user_permissions WHERE user_id = ? AND chat_id = ?`);
+    stmt.bind([userId, chatId]);
+    if (stmt.step()) {
+        const result = stmt.getAsObject();
+        stmt.free();
+        return result.can_send === 1;
+    }
+    stmt.free();
+    return false;
+}
+
 module.exports = {
     initDatabase,
     saveDatabase,
@@ -207,5 +418,21 @@ module.exports = {
     getChats,
     getMessages,
     getDeletedMessages,
-    searchMessages
+    searchMessages,
+    // User management
+    createUser,
+    verifyUser,
+    getUsers,
+    deleteUser,
+    updateUserPassword,
+    // Session management
+    createSession,
+    verifySession,
+    deleteSession,
+    // Permission management
+    setUserPermission,
+    removeUserPermission,
+    getUserPermissions,
+    getUserChats,
+    canUserSendToChat
 };

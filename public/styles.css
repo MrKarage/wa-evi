@@ -572,6 +572,192 @@ body {
     background: var(--wa-text-secondary);
 }
 
+/* Message Input */
+.message-input-container {
+    padding: 10px 16px;
+    background: var(--wa-header-bg);
+    flex-shrink: 0;
+}
+
+.message-input-box {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    background: var(--wa-input-bg);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+.message-input-box textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--wa-text);
+    font-size: 0.95rem;
+    resize: none;
+    outline: none;
+    max-height: 150px;
+    line-height: 1.4;
+}
+
+.message-input-box textarea::placeholder {
+    color: var(--wa-text-secondary);
+}
+
+.send-btn {
+    width: 40px;
+    height: 40px;
+    border: none;
+    background: var(--wa-green);
+    color: white;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.2s;
+}
+
+.send-btn:hover {
+    background: var(--wa-green-dark);
+}
+
+.send-btn:disabled {
+    background: var(--wa-border);
+    cursor: not-allowed;
+}
+
+/* Admin Panel */
+.admin-panel {
+    background: var(--wa-sidebar-bg);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.admin-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--wa-border);
+}
+
+.admin-header h2 {
+    color: var(--wa-text);
+    font-size: 1.2rem;
+    font-weight: 500;
+}
+
+.admin-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--wa-border);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 12px;
+    background: transparent;
+    border: none;
+    color: var(--wa-text-secondary);
+    cursor: pointer;
+    font-size: 0.95rem;
+    transition: all 0.2s;
+}
+
+.tab-btn.active {
+    color: var(--wa-green);
+    border-bottom: 2px solid var(--wa-green);
+}
+
+.tab-btn:hover {
+    background: var(--wa-hover);
+}
+
+.tab-content {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.add-user-form, .permissions-form {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--wa-border);
+}
+
+.add-user-form input, .permissions-form select {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px 12px;
+    background: var(--wa-input-bg);
+    border: none;
+    border-radius: 6px;
+    color: var(--wa-text);
+    font-size: 0.9rem;
+}
+
+.add-user-form label, .permissions-form label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--wa-text-secondary);
+    font-size: 0.9rem;
+}
+
+.btn {
+    padding: 10px 20px;
+    background: var(--wa-green);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+}
+
+.btn:hover {
+    background: var(--wa-green-dark);
+}
+
+.users-list, .permissions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.user-item, .perm-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: var(--wa-input-bg);
+    border-radius: 6px;
+    color: var(--wa-text);
+}
+
+.delete-btn {
+    padding: 6px 12px;
+    background: var(--wa-deleted);
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.delete-btn:hover {
+    background: #d9414e;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
     .sidebar {
