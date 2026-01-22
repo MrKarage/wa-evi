@@ -34,7 +34,12 @@ const client = new Client({
     }),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        timeout: 120000
+    },
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/nicoh00/nicoh_whatsappstorage/master/md.json'
     }
 });
 
