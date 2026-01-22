@@ -439,17 +439,25 @@ async function processMessageQueue() {
             const chat = await client.getChatById(chatId);
 
             // Send typing indicator
-            await chat.sendStateTyping();
+            try {
+                await chat.sendStateTyping();
+            } catch (e) {
+                console.log('Typing indicator failed, continuing...');
+            }
 
             // Calculate typing delay based on message length (50ms per character, min 1s, max 5s)
             const typingDelay = Math.min(Math.max(message.length * 50, 1000), 5000);
             await new Promise(r => setTimeout(r, typingDelay));
 
-            // Send the message
-            const sentMessage = await chat.sendMessage(message);
+            // Send the message using client.sendMessage to avoid sendSeen issues
+            const sentMessage = await client.sendMessage(chatId, message);
 
             // Clear typing state
-            await chat.clearState();
+            try {
+                await chat.clearState();
+            } catch (e) {
+                // Ignore clear state errors
+            }
 
             resolve(sentMessage);
         } catch (err) {
