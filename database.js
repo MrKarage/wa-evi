@@ -371,6 +371,22 @@ function getUserPermissions(userId) {
     return rows;
 }
 
+function getAllPermissions() {
+    if (!db) return [];
+    const stmt = db.prepare(`
+        SELECT p.*, u.username, c.name as chat_name
+        FROM user_permissions p
+        LEFT JOIN users u ON p.user_id = u.id
+        LEFT JOIN chats c ON p.chat_id = c.id
+    `);
+    const rows = [];
+    while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+}
+
 function getUserChats(userId, isAdmin) {
     if (!db) return [];
     if (isAdmin) {
@@ -433,6 +449,7 @@ module.exports = {
     setUserPermission,
     removeUserPermission,
     getUserPermissions,
+    getAllPermissions,
     getUserChats,
     canUserSendToChat
 };

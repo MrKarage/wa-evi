@@ -383,6 +383,15 @@ app.delete('/api/admin/users/:userId/permissions/:chatId', authMiddleware, admin
     res.json({ success: true });
 });
 
+app.get('/api/admin/permissions/all', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const permissions = db.getAllPermissions();
+        res.json(permissions);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============ API ROUTES ============
 app.get('/api/status', (req, res) => {
     res.json({ ready: isReady, qr: !isReady ? currentQR : null });

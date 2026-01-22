@@ -27,7 +27,6 @@ const modalImage = document.getElementById('modal-image');
 const usernameDisplay = document.getElementById('username-display');
 const adminBtn = document.getElementById('admin-btn');
 const logoutBtn = document.getElementById('logout-btn');
-const adminModal = document.getElementById('admin-modal');
 const closeAdminBtn = document.getElementById('close-admin-btn');
 const messageInputContainer = document.getElementById('message-input-container');
 const messageInput = document.getElementById('message-input');
@@ -331,91 +330,299 @@ logoutBtn.addEventListener('click', async () => {
     window.location.href = '/login.html';
 });
 
+// Admin panel state
+let adminUsers = [];
+let adminAllPermissions = [];
+let selectedUserId = null;
+let selectedChatIds = new Set();
+let usersPage = 1;
+const USERS_PER_PAGE = 10;
+
+const adminPanel = document.getElementById('admin-panel');
+
 // Admin panel
 adminBtn?.addEventListener('click', () => {
-    adminModal.classList.remove('hidden');
+    adminPanel.classList.remove('hidden');
+    dashboard.classList.add('hidden');
     loadAdminData();
 });
 
 closeAdminBtn?.addEventListener('click', () => {
-    adminModal.classList.add('hidden');
+    adminPanel.classList.add('hidden');
+    dashboard.classList.remove('hidden');
 });
 
-// Tab switching
-document.querySelectorAll('.tab-btn').forEach(btn => {
+// Admin tab switching
+document.querySelectorAll('.admin-nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        document.querySelectorAll('.admin-nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.add('hidden'));
         btn.classList.add('active');
         document.getElementById(`${btn.dataset.tab}-tab`).classList.remove('hidden');
+
+        // Load tab-specific data
+        if (btn.dataset.tab === 'matrix') {
+            loadPermissionMatrix();
+        }
     });
 });
 
 // Load admin data
 async function loadAdminData() {
-    // Load users
-    const usersRes = await fetch('/api/admin/users');
-    const users = await usersRes.json();
+    try {
+        const [usersRes, permsRes] = await Promise.all([
+            fetch('/api/admin/users'),
+            fetch('/api/admin/permissions/all')
+        ]);
 
-    const usersList = document.getElementById('users-list');
-    usersList.innerHTML = users.map(u => `
-        <div class="user-item">
-            <span>${escapeHtml(u.username)} ${u.is_admin ? '(Admin)' : ''}</span>
-            <button class="delete-btn" data-user-id="${u.id}">Delete</button>
-        </div>
-    `).join('');
+        adminUsers = await usersRes.json();
+        adminAllPermissions = await permsRes.json().catch(() => []);
 
-    usersList.querySelectorAll('.delete-btn').forEach(btn => {
+        // Update stats
+        document.getElementById('stat-users').textContent = adminUsers.length;
+        document.getElementById('stat-chats').textContent = chats.length;
+        document.getElementById('stat-perms').textContent = adminAllPermissions.length;
+
+        renderUsersTable();
+        renderRecentUsers();
+        updatePermissionDropdowns();
+    } catch (err) {
+        console.error('Error loading admin data:', err);
+    }
+}
+
+// Render users table with search and pagination
+function renderUsersTable(searchQuery = '') {
+    const filtered = adminUsers.filter(u =>
+        u.username.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    const totalPages = Math.ceil(filtered.length / USERS_PER_PAGE);
+    const start = (usersPage - 1) * USERS_PER_PAGE;
+    const paged = filtered.slice(start, start + USERS_PER_PAGE);
+
+    const tbody = document.getElementById('users-table-body');
+    tbody.innerHTML = paged.map(u => {
+        const permCount = adminAllPermissions.filter(p => p.user_id === u.id).length;
+        const createdDate = u.created_at ? new Date(u.created_at).toLocaleDateString() : '-';
+        return `
+            <tr>
+                <td><strong>${escapeHtml(u.username)}</strong></td>
+                <td><span class="badge ${u.is_admin ? 'badge-admin' : 'badge-user'}">${u.is_admin ? 'Admin' : 'User'}</span></td>
+                <td><span class="badge badge-count">${u.is_admin ? 'All' : permCount}</span></td>
+                <td>${createdDate}</td>
+                <td>
+                    ${!u.is_admin ? `<button class="btn btn-danger btn-sm delete-user-btn" data-user-id="${u.id}">Delete</button>` : '<span class="text-muted">-</span>'}
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // Add delete handlers
+    tbody.querySelectorAll('.delete-user-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
-            if (confirm('Delete this user?')) {
+            if (confirm('Delete this user? This will also remove all their permissions.')) {
                 await fetch(`/api/admin/users/${btn.dataset.userId}`, { method: 'DELETE' });
                 loadAdminData();
             }
         });
     });
 
-    // Load user select for permissions
-    const userSelect = document.getElementById('perm-user-select');
-    userSelect.innerHTML = users.filter(u => !u.is_admin).map(u =>
-        `<option value="${u.id}">${escapeHtml(u.username)}</option>`
-    ).join('');
-
-    // Load chat select
-    const chatSelect = document.getElementById('perm-chat-select');
-    chatSelect.innerHTML = chats.map(c =>
-        `<option value="${c.id}">${escapeHtml(c.name || c.id)}</option>`
-    ).join('');
-
-    // Load permissions for selected user
-    if (userSelect.value) {
-        loadUserPermissions(userSelect.value);
-    }
-
-    userSelect.addEventListener('change', () => {
-        loadUserPermissions(userSelect.value);
+    // Render pagination
+    renderPagination('users-pagination', usersPage, totalPages, (page) => {
+        usersPage = page;
+        renderUsersTable(searchQuery);
     });
 }
 
-async function loadUserPermissions(userId) {
-    const res = await fetch(`/api/admin/users/${userId}/permissions`);
-    const permissions = await res.json();
+function renderPagination(containerId, currentPage, totalPages, onPageChange) {
+    const container = document.getElementById(containerId);
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
 
-    const permList = document.getElementById('permissions-list');
-    permList.innerHTML = permissions.map(p => `
-        <div class="perm-item">
-            <span>${escapeHtml(p.chat_name || p.chat_id)}</span>
-            <span>${p.can_read ? 'Read' : ''} ${p.can_send ? 'Send' : ''}</span>
-            <button class="delete-btn" data-chat-id="${p.chat_id}">Remove</button>
-        </div>
-    `).join('');
+    let html = `<button ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}">&lt;</button>`;
 
-    permList.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            await fetch(`/api/admin/users/${userId}/permissions/${encodeURIComponent(btn.dataset.chatId)}`, { method: 'DELETE' });
-            loadUserPermissions(userId);
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+            html += `<button class="${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+        } else if (i === currentPage - 2 || i === currentPage + 2) {
+            html += `<span>...</span>`;
+        }
+    }
+
+    html += `<button ${currentPage === totalPages ? 'disabled' : ''} data-page="${currentPage + 1}">&gt;</button>`;
+    container.innerHTML = html;
+
+    container.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!btn.disabled) onPageChange(parseInt(btn.dataset.page));
         });
     });
 }
+
+function renderRecentUsers() {
+    const recent = adminUsers.slice(0, 5);
+    const container = document.getElementById('recent-users');
+    container.innerHTML = recent.map(u => `
+        <div class="perm-card">
+            <div class="perm-card-info">
+                <div class="perm-card-name">${escapeHtml(u.username)}</div>
+                <div class="perm-card-badges">
+                    <span class="perm-badge ${u.is_admin ? 'send' : 'read'}">${u.is_admin ? 'Admin' : 'User'}</span>
+                </div>
+            </div>
+        </div>
+    `).join('') || '<p class="text-muted">No users yet</p>';
+}
+
+// User search
+document.getElementById('user-search')?.addEventListener('input', (e) => {
+    usersPage = 1;
+    renderUsersTable(e.target.value);
+});
+
+// Permission dropdowns
+function updatePermissionDropdowns() {
+    // User dropdown
+    const userDropdown = document.getElementById('perm-user-dropdown');
+    const nonAdminUsers = adminUsers.filter(u => !u.is_admin);
+    userDropdown.innerHTML = nonAdminUsers.map(u => `
+        <div class="select-dropdown-item" data-user-id="${u.id}">${escapeHtml(u.username)}</div>
+    `).join('') || '<div class="select-dropdown-item">No non-admin users</div>';
+
+    // Chat dropdown
+    updateChatDropdown();
+}
+
+function updateChatDropdown(searchQuery = '') {
+    const chatDropdown = document.getElementById('perm-chat-dropdown');
+    const filtered = chats.filter(c =>
+        (c.name || c.id).toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    chatDropdown.innerHTML = filtered.slice(0, 50).map(c => `
+        <div class="select-dropdown-item ${selectedChatIds.has(c.id) ? 'selected' : ''}" data-chat-id="${c.id}">
+            ${escapeHtml(c.name || c.id)}
+            ${selectedChatIds.has(c.id) ? '<span>✓</span>' : ''}
+        </div>
+    `).join('') || '<div class="select-dropdown-item">No chats found</div>';
+
+    // Add click handlers
+    chatDropdown.querySelectorAll('.select-dropdown-item[data-chat-id]').forEach(item => {
+        item.addEventListener('click', () => {
+            const chatId = item.dataset.chatId;
+            if (selectedChatIds.has(chatId)) {
+                selectedChatIds.delete(chatId);
+            } else {
+                selectedChatIds.add(chatId);
+            }
+            updateChatDropdown(searchQuery);
+        });
+    });
+}
+
+// User search dropdown
+const permUserSearch = document.getElementById('perm-user-search');
+const permUserDropdown = document.getElementById('perm-user-dropdown');
+
+permUserSearch?.addEventListener('focus', () => {
+    permUserDropdown.classList.add('show');
+});
+
+permUserSearch?.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase();
+    const items = permUserDropdown.querySelectorAll('.select-dropdown-item');
+    items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(query) ? '' : 'none';
+    });
+});
+
+permUserDropdown?.addEventListener('click', (e) => {
+    const item = e.target.closest('.select-dropdown-item');
+    if (item && item.dataset.userId) {
+        selectedUserId = item.dataset.userId;
+        const user = adminUsers.find(u => u.id == selectedUserId);
+        permUserSearch.value = user?.username || '';
+        permUserDropdown.classList.remove('show');
+
+        document.getElementById('selected-user').textContent = user?.username;
+        document.getElementById('selected-user').classList.add('show');
+        document.getElementById('perm-user-name').textContent = user?.username;
+
+        loadUserPermissionsGrid(selectedUserId);
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.search-select')) {
+        document.querySelectorAll('.select-dropdown').forEach(d => d.classList.remove('show'));
+    }
+});
+
+// Chat search dropdown
+const permChatSearch = document.getElementById('perm-chat-search');
+const permChatDropdown = document.getElementById('perm-chat-dropdown');
+
+permChatSearch?.addEventListener('focus', () => {
+    permChatDropdown.classList.add('show');
+});
+
+permChatSearch?.addEventListener('input', (e) => {
+    updateChatDropdown(e.target.value);
+    permChatDropdown.classList.add('show');
+});
+
+// Select all chats
+document.getElementById('select-all-chats-btn')?.addEventListener('click', () => {
+    if (selectedChatIds.size === chats.length) {
+        selectedChatIds.clear();
+    } else {
+        chats.forEach(c => selectedChatIds.add(c.id));
+    }
+    updateChatDropdown(permChatSearch?.value || '');
+});
+
+// Load user permissions grid
+async function loadUserPermissionsGrid(userId) {
+    const res = await fetch(`/api/admin/users/${userId}/permissions`);
+    const permissions = await res.json();
+
+    const grid = document.getElementById('permissions-grid');
+    grid.innerHTML = permissions.map(p => `
+        <div class="perm-card">
+            <div class="perm-card-info">
+                <div class="perm-card-name">${escapeHtml(p.chat_name || p.chat_id)}</div>
+                <div class="perm-card-badges">
+                    ${p.can_read ? '<span class="perm-badge read">Read</span>' : ''}
+                    ${p.can_send ? '<span class="perm-badge send">Send</span>' : ''}
+                </div>
+            </div>
+            <div class="perm-card-actions">
+                <button class="btn btn-danger btn-sm" data-chat-id="${p.chat_id}">Remove</button>
+            </div>
+        </div>
+    `).join('') || '<p class="text-muted">No permissions assigned</p>';
+
+    grid.querySelectorAll('.btn-danger').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            await fetch(`/api/admin/users/${userId}/permissions/${encodeURIComponent(btn.dataset.chatId)}`, { method: 'DELETE' });
+            loadUserPermissionsGrid(userId);
+            loadAdminData();
+        });
+    });
+}
+
+// Filter permissions list
+document.getElementById('perm-list-search')?.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase();
+    document.querySelectorAll('#permissions-grid .perm-card').forEach(card => {
+        const name = card.querySelector('.perm-card-name').textContent.toLowerCase();
+        card.style.display = name.includes(query) ? '' : 'none';
+    });
+});
 
 // Add user
 document.getElementById('add-user-btn')?.addEventListener('click', async () => {
@@ -442,23 +649,120 @@ document.getElementById('add-user-btn')?.addEventListener('click', async () => {
     }
 });
 
-// Add permission
+// Add permissions (bulk)
 document.getElementById('add-perm-btn')?.addEventListener('click', async () => {
-    const userId = document.getElementById('perm-user-select').value;
-    const chatId = document.getElementById('perm-chat-select').value;
+    if (!selectedUserId) return alert('Select a user first');
+    if (selectedChatIds.size === 0) return alert('Select at least one chat');
+
     const canRead = document.getElementById('perm-can-read').checked;
     const canSend = document.getElementById('perm-can-send').checked;
 
-    if (!userId || !chatId) return;
+    // Add permissions for all selected chats
+    for (const chatId of selectedChatIds) {
+        await fetch(`/api/admin/users/${selectedUserId}/permissions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId, canRead, canSend })
+        });
+    }
 
+    selectedChatIds.clear();
+    updateChatDropdown('');
+    loadUserPermissionsGrid(selectedUserId);
+    loadAdminData();
+    alert(`Permissions applied to ${selectedChatIds.size || 'selected'} chat(s)`);
+});
+
+// Permission Matrix
+async function loadPermissionMatrix() {
+    const nonAdminUsers = adminUsers.filter(u => !u.is_admin);
+
+    if (nonAdminUsers.length === 0 || chats.length === 0) {
+        document.getElementById('matrix-body').innerHTML = '<tr><td colspan="100">No data available</td></tr>';
+        return;
+    }
+
+    // Build header
+    const header = document.getElementById('matrix-header');
+    header.innerHTML = `
+        <tr>
+            <th>User / Chat</th>
+            ${chats.slice(0, 20).map(c => `<th title="${escapeHtml(c.name || c.id)}">${escapeHtml((c.name || c.id).substring(0, 10))}...</th>`).join('')}
+        </tr>
+    `;
+
+    // Build body
+    const body = document.getElementById('matrix-body');
+    body.innerHTML = nonAdminUsers.map(user => {
+        const userPerms = adminAllPermissions.filter(p => p.user_id === user.id);
+        return `
+            <tr>
+                <td>${escapeHtml(user.username)}</td>
+                ${chats.slice(0, 20).map(chat => {
+                    const perm = userPerms.find(p => p.chat_id === chat.id);
+                    let cellClass = 'none';
+                    if (perm?.can_read && perm?.can_send) cellClass = 'both';
+                    else if (perm?.can_read) cellClass = 'read';
+                    else if (perm?.can_send) cellClass = 'send';
+                    return `<td class="matrix-cell ${cellClass}" data-user-id="${user.id}" data-chat-id="${chat.id}" title="${escapeHtml(user.username)} - ${escapeHtml(chat.name || chat.id)}"></td>`;
+                }).join('')}
+            </tr>
+        `;
+    }).join('');
+
+    // Add click handlers for matrix cells
+    body.querySelectorAll('.matrix-cell').forEach(cell => {
+        cell.addEventListener('click', async () => {
+            const userId = cell.dataset.userId;
+            const chatId = cell.dataset.chatId;
+
+            // Cycle through: none -> read -> both -> none
+            if (cell.classList.contains('none')) {
+                await setPermission(userId, chatId, true, false);
+                cell.className = 'matrix-cell read';
+            } else if (cell.classList.contains('read')) {
+                await setPermission(userId, chatId, true, true);
+                cell.className = 'matrix-cell both';
+            } else {
+                await deletePermission(userId, chatId);
+                cell.className = 'matrix-cell none';
+            }
+            loadAdminData();
+        });
+    });
+}
+
+async function setPermission(userId, chatId, canRead, canSend) {
     await fetch(`/api/admin/users/${userId}/permissions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatId, canRead, canSend })
     });
+}
 
-    loadUserPermissions(userId);
-});
+async function deletePermission(userId, chatId) {
+    await fetch(`/api/admin/users/${userId}/permissions/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
+}
+
+// Matrix filters
+document.getElementById('matrix-user-filter')?.addEventListener('input', () => filterMatrix());
+document.getElementById('matrix-chat-filter')?.addEventListener('input', () => filterMatrix());
+
+function filterMatrix() {
+    const userFilter = document.getElementById('matrix-user-filter').value.toLowerCase();
+    const chatFilter = document.getElementById('matrix-chat-filter').value.toLowerCase();
+
+    // Filter rows (users)
+    document.querySelectorAll('#matrix-body tr').forEach(row => {
+        const username = row.querySelector('td:first-child').textContent.toLowerCase();
+        row.style.display = username.includes(userFilter) ? '' : 'none';
+    });
+
+    // For chat filter we'd need to rebuild - for now just reload
+    if (chatFilter) {
+        // This is a simplified version - full implementation would filter columns
+    }
+}
 
 // Show deleted messages
 showDeletedBtn.addEventListener('click', async () => {
@@ -523,16 +827,20 @@ imageModal.addEventListener('click', (e) => {
     }
 });
 
-adminModal?.addEventListener('click', (e) => {
-    if (e.target === adminModal) {
-        adminModal.classList.add('hidden');
+adminPanel?.addEventListener('click', (e) => {
+    if (e.target === adminPanel) {
+        adminPanel.classList.add('hidden');
+        dashboard.classList.remove('hidden');
     }
 });
 
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         imageModal.classList.add('hidden');
-        adminModal?.classList.add('hidden');
+        if (adminPanel && !adminPanel.classList.contains('hidden')) {
+            adminPanel.classList.add('hidden');
+            dashboard.classList.remove('hidden');
+        }
     }
 });
 
