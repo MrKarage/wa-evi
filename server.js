@@ -449,8 +449,8 @@ async function processMessageQueue() {
             const typingDelay = Math.min(Math.max(message.length * 50, 1000), 5000);
             await new Promise(r => setTimeout(r, typingDelay));
 
-            // Send the message using client.sendMessage to avoid sendSeen issues
-            const sentMessage = await client.sendMessage(chatId, message);
+            // Send the message with sendSeen disabled to avoid markedUnread errors on @lid chats
+            const sentMessage = await client.sendMessage(chatId, message, { sendSeen: false });
 
             // Clear typing state
             try {
