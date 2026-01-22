@@ -104,6 +104,49 @@ async function initDatabase() {
         )
     `);
 
+    // Settings table
+    db.run(`
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    `);
+
+    // Chat assignments table (which agent handles which chat)
+    db.run(`
+        CREATE TABLE IF NOT EXISTS chat_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            assigned_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    // Keyword rules table (for keyword-based routing)
+    db.run(`
+        CREATE TABLE IF NOT EXISTS keyword_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyword TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            priority INTEGER DEFAULT 0,
+            created_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    // Set default assignment mode if not exists
+    const modeExists = db.exec("SELECT value FROM settings WHERE key = 'assignment_mode'");
+    if (modeExists.length === 0 || modeExists[0].values.length === 0) {
+        db.run(`INSERT INTO settings (key, value) VALUES ('assignment_mode', 'manual')`);
+    }
+
+    // Set default round-robin index if not exists
+    const rrExists = db.exec("SELECT value FROM settings WHERE key = 'round_robin_index'");
+    if (rrExists.length === 0 || rrExists[0].values.length === 0) {
+        db.run(`INSERT INTO settings (key, value) VALUES ('round_robin_index', '0')`);
+    }
+
     // Create default admin if not exists
     const adminExists = db.exec("SELECT id FROM users WHERE username = 'admin'");
     if (adminExists.length === 0 || adminExists[0].values.length === 0) {
@@ -424,6 +467,251 @@ function canUserSendToChat(userId, chatId, isAdmin) {
     return false;
 }
 
+// ============ SETTINGS ============
+function getSetting(key) {
+    if (!db) return null;
+    const stmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+    stmt.bind([key]);
+    if (stmt.step()) {
+        const result = stmt.getAsObject();
+        stmt.free();
+        return result.value;
+    }
+    stmt.free();
+    return null;
+}
+
+function setSetting(key, value) {
+    if (!db) return;
+    const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+    stmt.run([key, value]);
+    stmt.free();
+    saveDatabase();
+}
+
+function getAllSettings() {
+    if (!db) return {};
+    const stmt = db.prepare(`SELECT key, value FROM settings`);
+    const settings = {};
+    while (stmt.step()) {
+        const row = stmt.getAsObject();
+        settings[row.key] = row.value;
+    }
+    stmt.free();
+    return settings;
+}
+
+// ============ CHAT ASSIGNMENTS ============
+function getChatAssignment(chatId) {
+    if (!db) return null;
+    const stmt = db.prepare(`
+        SELECT a.*, u.username
+        FROM chat_assignments a
+        LEFT JOIN users u ON a.user_id = u.id
+        WHERE a.chat_id = ?
+    `);
+    stmt.bind([chatId]);
+    if (stmt.step()) {
+        const result = stmt.getAsObject();
+        stmt.free();
+        return result;
+    }
+    stmt.free();
+    return null;
+}
+
+function assignChatToUser(chatId, userId) {
+    if (!db) return;
+    const stmt = db.prepare(`
+        INSERT OR REPLACE INTO chat_assignments (chat_id, user_id, assigned_at)
+        VALUES (?, ?, ?)
+    `);
+    stmt.run([chatId, userId, Date.now()]);
+    stmt.free();
+
+    // Also grant read/send permissions automatically
+    setUserPermission(userId, chatId, true, true);
+    saveDatabase();
+}
+
+function unassignChat(chatId) {
+    if (!db) return;
+    const stmt = db.prepare(`DELETE FROM chat_assignments WHERE chat_id = ?`);
+    stmt.run([chatId]);
+    stmt.free();
+    saveDatabase();
+}
+
+function getAllAssignments() {
+    if (!db) return [];
+    const stmt = db.prepare(`
+        SELECT a.*, u.username, c.name as chat_name
+        FROM chat_assignments a
+        LEFT JOIN users u ON a.user_id = u.id
+        LEFT JOIN chats c ON a.chat_id = c.id
+        ORDER BY a.assigned_at DESC
+    `);
+    const rows = [];
+    while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+}
+
+function getUserAssignmentCount(userId) {
+    if (!db) return 0;
+    const stmt = db.prepare(`SELECT COUNT(*) as count FROM chat_assignments WHERE user_id = ?`);
+    stmt.bind([userId]);
+    if (stmt.step()) {
+        const result = stmt.getAsObject();
+        stmt.free();
+        return result.count;
+    }
+    stmt.free();
+    return 0;
+}
+
+// ============ KEYWORD RULES ============
+function addKeywordRule(keyword, userId, priority = 0) {
+    if (!db) return;
+    const stmt = db.prepare(`
+        INSERT INTO keyword_rules (keyword, user_id, priority, created_at)
+        VALUES (?, ?, ?, ?)
+    `);
+    stmt.run([keyword.toLowerCase(), userId, priority, Date.now()]);
+    stmt.free();
+    saveDatabase();
+}
+
+function removeKeywordRule(id) {
+    if (!db) return;
+    const stmt = db.prepare(`DELETE FROM keyword_rules WHERE id = ?`);
+    stmt.run([id]);
+    stmt.free();
+    saveDatabase();
+}
+
+function getAllKeywordRules() {
+    if (!db) return [];
+    const stmt = db.prepare(`
+        SELECT k.*, u.username
+        FROM keyword_rules k
+        LEFT JOIN users u ON k.user_id = u.id
+        ORDER BY k.priority DESC, k.keyword
+    `);
+    const rows = [];
+    while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+}
+
+function findKeywordMatch(text) {
+    if (!db || !text) return null;
+    const lowerText = text.toLowerCase();
+    const rules = getAllKeywordRules();
+
+    // Check each keyword (sorted by priority)
+    for (const rule of rules) {
+        if (lowerText.includes(rule.keyword)) {
+            return rule;
+        }
+    }
+    return null;
+}
+
+// ============ AUTO-ASSIGNMENT LOGIC ============
+function getAvailableAgents() {
+    if (!db) return [];
+    // Get non-admin users who can be assigned
+    const stmt = db.prepare(`SELECT * FROM users WHERE is_admin = 0`);
+    const rows = [];
+    while (stmt.step()) {
+        rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+}
+
+function getNextRoundRobinAgent() {
+    const agents = getAvailableAgents();
+    if (agents.length === 0) return null;
+
+    const currentIndex = parseInt(getSetting('round_robin_index') || '0');
+    const nextIndex = (currentIndex + 1) % agents.length;
+    setSetting('round_robin_index', nextIndex.toString());
+
+    return agents[currentIndex % agents.length];
+}
+
+function getLeastBusyAgent() {
+    const agents = getAvailableAgents();
+    if (agents.length === 0) return null;
+
+    let leastBusy = null;
+    let minCount = Infinity;
+
+    for (const agent of agents) {
+        const count = getUserAssignmentCount(agent.id);
+        if (count < minCount) {
+            minCount = count;
+            leastBusy = agent;
+        }
+    }
+
+    return leastBusy;
+}
+
+function autoAssignChat(chatId, messageText) {
+    // Check if chat is already assigned
+    const existing = getChatAssignment(chatId);
+    if (existing) return existing;
+
+    const mode = getSetting('assignment_mode') || 'manual';
+    let assignedAgent = null;
+
+    switch (mode) {
+        case 'round_robin':
+            assignedAgent = getNextRoundRobinAgent();
+            break;
+
+        case 'least_busy':
+            assignedAgent = getLeastBusyAgent();
+            break;
+
+        case 'keyword':
+            const keywordMatch = findKeywordMatch(messageText);
+            if (keywordMatch) {
+                // Get user for this keyword
+                const stmt = db.prepare(`SELECT * FROM users WHERE id = ?`);
+                stmt.bind([keywordMatch.user_id]);
+                if (stmt.step()) {
+                    assignedAgent = stmt.getAsObject();
+                }
+                stmt.free();
+            }
+            // Fallback to round-robin if no keyword match
+            if (!assignedAgent) {
+                assignedAgent = getNextRoundRobinAgent();
+            }
+            break;
+
+        case 'manual':
+        default:
+            // Manual mode - don't auto-assign
+            return null;
+    }
+
+    if (assignedAgent) {
+        assignChatToUser(chatId, assignedAgent.id);
+        return { user_id: assignedAgent.id, username: assignedAgent.username, chat_id: chatId };
+    }
+
+    return null;
+}
+
 module.exports = {
     initDatabase,
     saveDatabase,
@@ -451,5 +739,23 @@ module.exports = {
     getUserPermissions,
     getAllPermissions,
     getUserChats,
-    canUserSendToChat
+    canUserSendToChat,
+    // Settings
+    getSetting,
+    setSetting,
+    getAllSettings,
+    // Chat assignments
+    getChatAssignment,
+    assignChatToUser,
+    unassignChat,
+    getAllAssignments,
+    getUserAssignmentCount,
+    // Keyword rules
+    addKeywordRule,
+    removeKeywordRule,
+    getAllKeywordRules,
+    findKeywordMatch,
+    // Auto-assignment
+    getAvailableAgents,
+    autoAssignChat
 };

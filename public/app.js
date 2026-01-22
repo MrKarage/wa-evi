@@ -764,6 +764,235 @@ function filterMatrix() {
     }
 }
 
+// ============ SETTINGS & ASSIGNMENTS ============
+
+let adminSettings = {};
+let adminAssignments = [];
+let adminKeywordRules = [];
+let adminAgents = [];
+
+// Load settings and assignments when switching tabs
+document.querySelectorAll('.admin-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (btn.dataset.tab === 'settings') {
+            loadSettingsData();
+        } else if (btn.dataset.tab === 'assignments') {
+            loadAssignmentsData();
+        }
+    });
+});
+
+// Load settings data
+async function loadSettingsData() {
+    try {
+        const [settingsRes, keywordsRes, agentsRes] = await Promise.all([
+            fetch('/api/admin/settings'),
+            fetch('/api/admin/keywords'),
+            fetch('/api/admin/agents')
+        ]);
+
+        adminSettings = await settingsRes.json();
+        adminKeywordRules = await keywordsRes.json();
+        adminAgents = await agentsRes.json();
+
+        // Set current mode
+        const currentMode = adminSettings.assignment_mode || 'manual';
+        document.querySelectorAll('input[name="assignment_mode"]').forEach(input => {
+            input.checked = input.value === currentMode;
+        });
+
+        // Populate keyword agent dropdown
+        const keywordAgentSelect = document.getElementById('keyword-agent-select');
+        if (keywordAgentSelect) {
+            keywordAgentSelect.innerHTML = adminAgents.map(a =>
+                `<option value="${a.id}">${escapeHtml(a.username)}</option>`
+            ).join('') || '<option value="">No agents available</option>';
+        }
+
+        // Show/hide keyword rules section based on mode
+        const keywordSection = document.getElementById('keyword-rules-section');
+        if (keywordSection) {
+            keywordSection.style.display = currentMode === 'keyword' ? 'block' : 'none';
+        }
+
+        renderKeywordRules();
+    } catch (err) {
+        console.error('Error loading settings:', err);
+    }
+}
+
+// Save assignment mode
+document.getElementById('save-mode-btn')?.addEventListener('click', async () => {
+    const selectedMode = document.querySelector('input[name="assignment_mode"]:checked')?.value;
+    if (!selectedMode) return;
+
+    await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'assignment_mode', value: selectedMode })
+    });
+
+    // Show/hide keyword rules section
+    const keywordSection = document.getElementById('keyword-rules-section');
+    if (keywordSection) {
+        keywordSection.style.display = selectedMode === 'keyword' ? 'block' : 'none';
+    }
+
+    alert('Assignment mode saved!');
+});
+
+// Mode radio buttons toggle keyword section
+document.querySelectorAll('input[name="assignment_mode"]').forEach(input => {
+    input.addEventListener('change', () => {
+        const keywordSection = document.getElementById('keyword-rules-section');
+        if (keywordSection) {
+            keywordSection.style.display = input.value === 'keyword' ? 'block' : 'none';
+        }
+    });
+});
+
+// Render keyword rules
+function renderKeywordRules() {
+    const list = document.getElementById('keyword-rules-list');
+    if (!list) return;
+
+    list.innerHTML = adminKeywordRules.map(rule => `
+        <div class="keyword-rule-item">
+            <div class="keyword-rule-info">
+                <span class="keyword-badge">${escapeHtml(rule.keyword)}</span>
+                <span class="keyword-agent">→ ${escapeHtml(rule.username)}</span>
+                <span class="keyword-priority">Priority: ${rule.priority}</span>
+            </div>
+            <button class="btn btn-danger btn-sm" data-rule-id="${rule.id}">Remove</button>
+        </div>
+    `).join('') || '<p class="text-muted">No keyword rules defined</p>';
+
+    list.querySelectorAll('.btn-danger').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            await fetch(`/api/admin/keywords/${btn.dataset.ruleId}`, { method: 'DELETE' });
+            loadSettingsData();
+        });
+    });
+}
+
+// Add keyword rule
+document.getElementById('add-keyword-btn')?.addEventListener('click', async () => {
+    const keyword = document.getElementById('new-keyword').value.trim();
+    const userId = document.getElementById('keyword-agent-select').value;
+    const priority = parseInt(document.getElementById('keyword-priority').value) || 0;
+
+    if (!keyword || !userId) return alert('Enter keyword and select agent');
+
+    await fetch('/api/admin/keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword, userId: parseInt(userId), priority })
+    });
+
+    document.getElementById('new-keyword').value = '';
+    document.getElementById('keyword-priority').value = '0';
+    loadSettingsData();
+});
+
+// Load assignments data
+async function loadAssignmentsData() {
+    try {
+        const [assignmentsRes, agentsRes] = await Promise.all([
+            fetch('/api/admin/assignments'),
+            fetch('/api/admin/agents')
+        ]);
+
+        adminAssignments = await assignmentsRes.json();
+        adminAgents = await agentsRes.json();
+
+        // Populate dropdowns
+        const chatSelect = document.getElementById('assign-chat-select');
+        const agentSelect = document.getElementById('assign-agent-select');
+
+        if (chatSelect) {
+            // Filter out already assigned chats
+            const assignedChatIds = new Set(adminAssignments.map(a => a.chat_id));
+            const unassignedChats = chats.filter(c => !assignedChatIds.has(c.id));
+            chatSelect.innerHTML = unassignedChats.map(c =>
+                `<option value="${c.id}">${escapeHtml(c.name || c.id)}</option>`
+            ).join('') || '<option value="">All chats assigned</option>';
+        }
+
+        if (agentSelect) {
+            agentSelect.innerHTML = adminAgents.map(a =>
+                `<option value="${a.id}">${escapeHtml(a.username)}</option>`
+            ).join('') || '<option value="">No agents available</option>';
+        }
+
+        renderAssignments();
+    } catch (err) {
+        console.error('Error loading assignments:', err);
+    }
+}
+
+// Render assignments
+function renderAssignments(searchQuery = '') {
+    const grid = document.getElementById('assignments-grid');
+    if (!grid) return;
+
+    const filtered = adminAssignments.filter(a =>
+        (a.chat_name || a.chat_id).toLowerCase().includes(searchQuery.toLowerCase()) ||
+        a.username.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    grid.innerHTML = filtered.map(a => `
+        <div class="assignment-card">
+            <div class="assignment-card-info">
+                <div class="assignment-chat-name">${escapeHtml(a.chat_name || a.chat_id)}</div>
+                <div class="assignment-agent-name">Assigned to: ${escapeHtml(a.username)}</div>
+                <div class="assignment-date">${a.assigned_at ? new Date(a.assigned_at).toLocaleString() : ''}</div>
+            </div>
+            <button class="btn btn-danger btn-sm" data-chat-id="${a.chat_id}">Unassign</button>
+        </div>
+    `).join('') || '<p class="text-muted">No assignments yet</p>';
+
+    grid.querySelectorAll('.btn-danger').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            if (confirm('Remove this assignment?')) {
+                await fetch(`/api/admin/assignments/${encodeURIComponent(btn.dataset.chatId)}`, { method: 'DELETE' });
+                loadAssignmentsData();
+                loadAdminData();
+            }
+        });
+    });
+}
+
+// Manual assign
+document.getElementById('manual-assign-btn')?.addEventListener('click', async () => {
+    const chatId = document.getElementById('assign-chat-select').value;
+    const userId = document.getElementById('assign-agent-select').value;
+
+    if (!chatId || !userId) return alert('Select chat and agent');
+
+    await fetch('/api/admin/assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId, userId: parseInt(userId) })
+    });
+
+    loadAssignmentsData();
+    loadAdminData();
+});
+
+// Assignment search
+document.getElementById('assignment-search')?.addEventListener('input', (e) => {
+    renderAssignments(e.target.value);
+});
+
+// Listen for chat assignment events
+socket.on('chat_assigned', (data) => {
+    console.log(`Chat ${data.chatId} assigned to ${data.username}`);
+    // Reload chats if we're logged in
+    if (currentUser) {
+        loadChats();
+    }
+});
+
 // Show deleted messages
 showDeletedBtn.addEventListener('click', async () => {
     currentChatId = null;

@@ -287,6 +287,20 @@ client.on('message_create', async (message) => {
     const savedMessage = await saveMessage(message);
     if (savedMessage) {
         io.emit('new_message', savedMessage);
+
+        // Auto-assign chat to agent if it's a new incoming message
+        if (!message.fromMe) {
+            const chatId = message.from || message.to;
+            const assignment = db.autoAssignChat(chatId, message.body || '');
+            if (assignment) {
+                console.log(`Auto-assigned chat ${chatId} to ${assignment.username}`);
+                io.emit('chat_assigned', {
+                    chatId: chatId,
+                    userId: assignment.user_id,
+                    username: assignment.username
+                });
+            }
+        }
     }
 });
 
@@ -387,6 +401,95 @@ app.get('/api/admin/permissions/all', authMiddleware, adminMiddleware, (req, res
     try {
         const permissions = db.getAllPermissions();
         res.json(permissions);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ SETTINGS ROUTES ============
+app.get('/api/admin/settings', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const settings = db.getAllSettings();
+        res.json(settings);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/admin/settings', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const { key, value } = req.body;
+        db.setSetting(key, value);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ ASSIGNMENT ROUTES ============
+app.get('/api/admin/assignments', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const assignments = db.getAllAssignments();
+        res.json(assignments);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/admin/assignments', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const { chatId, userId } = req.body;
+        db.assignChatToUser(chatId, userId);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/admin/assignments/:chatId', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const chatId = decodeURIComponent(req.params.chatId);
+        db.unassignChat(chatId);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ KEYWORD RULES ROUTES ============
+app.get('/api/admin/keywords', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const rules = db.getAllKeywordRules();
+        res.json(rules);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/admin/keywords', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const { keyword, userId, priority } = req.body;
+        db.addKeywordRule(keyword, userId, priority || 0);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/admin/keywords/:id', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        db.removeKeywordRule(parseInt(req.params.id));
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get available agents for assignment
+app.get('/api/admin/agents', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const agents = db.getAvailableAgents();
+        res.json(agents);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

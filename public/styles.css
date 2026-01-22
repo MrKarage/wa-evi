@@ -1304,6 +1304,256 @@ body {
     background: #d9414e;
 }
 
+/* Settings Tab Styles */
+.settings-card {
+    background: var(--wa-header-bg);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.settings-card h4 {
+    color: var(--wa-text);
+    margin-bottom: 8px;
+}
+
+.settings-card p {
+    margin-bottom: 20px;
+}
+
+.assignment-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    background: var(--wa-input-bg);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 2px solid transparent;
+}
+
+.mode-option:hover {
+    background: var(--wa-hover);
+}
+
+.mode-option input[type="radio"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--wa-green);
+    margin-top: 2px;
+}
+
+.mode-option input[type="radio"]:checked + .mode-content {
+    color: var(--wa-text);
+}
+
+.mode-option:has(input:checked) {
+    border-color: var(--wa-green);
+    background: rgba(0, 168, 132, 0.1);
+}
+
+.mode-content {
+    flex: 1;
+}
+
+.mode-content strong {
+    display: block;
+    color: var(--wa-text);
+    margin-bottom: 4px;
+}
+
+.mode-content span {
+    font-size: 0.85rem;
+    color: var(--wa-text-secondary);
+}
+
+/* Keyword Rules */
+.keyword-form {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.keyword-form input,
+.keyword-form select {
+    padding: 10px 14px;
+    background: var(--wa-input-bg);
+    border: none;
+    border-radius: 8px;
+    color: var(--wa-text);
+    font-size: 0.9rem;
+}
+
+.keyword-form input:focus,
+.keyword-form select:focus {
+    outline: 2px solid var(--wa-green);
+}
+
+.keyword-form input[type="text"] {
+    flex: 2;
+    min-width: 150px;
+}
+
+.keyword-form select {
+    flex: 1;
+    min-width: 150px;
+}
+
+.keyword-form input[type="number"] {
+    width: 100px;
+}
+
+.keyword-rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.keyword-rule-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--wa-input-bg);
+    border-radius: 8px;
+}
+
+.keyword-rule-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.keyword-badge {
+    background: var(--wa-green);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.keyword-agent {
+    color: var(--wa-text);
+}
+
+.keyword-priority {
+    color: var(--wa-text-secondary);
+    font-size: 0.85rem;
+}
+
+/* Assignment Tab Styles */
+.assignment-config-panel {
+    background: var(--wa-header-bg);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.assignment-config-panel h4 {
+    color: var(--wa-text);
+    margin-bottom: 16px;
+}
+
+.assignment-form {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
+.assignment-form .selector-group {
+    flex: 1;
+    min-width: 200px;
+}
+
+.assignment-form .selector-group label {
+    display: block;
+    color: var(--wa-text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+}
+
+.form-select {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--wa-input-bg);
+    border: none;
+    border-radius: 8px;
+    color: var(--wa-text);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.form-select:focus {
+    outline: 2px solid var(--wa-green);
+}
+
+.form-select option {
+    background: var(--wa-sidebar-bg);
+    color: var(--wa-text);
+}
+
+.assignments-list-panel {
+    background: var(--wa-header-bg);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.assignments-list-panel h4 {
+    color: var(--wa-text);
+    margin-bottom: 16px;
+}
+
+.assignments-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+}
+
+.assignment-card {
+    background: var(--wa-input-bg);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.assignment-card-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.assignment-chat-name {
+    color: var(--wa-text);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.assignment-agent-name {
+    color: var(--wa-green);
+    font-size: 0.85rem;
+    margin-top: 4px;
+}
+
+.assignment-date {
+    color: var(--wa-text-secondary);
+    font-size: 0.75rem;
+    margin-top: 4px;
+}
+
 /* Responsive Admin */
 @media (max-width: 768px) {
     .admin-sidebar {
