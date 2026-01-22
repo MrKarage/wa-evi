@@ -317,6 +317,8 @@ body {
     display: flex;
     flex-direction: column;
     background: var(--wa-chat-bg);
+    height: 100%;
+    overflow: hidden;
 }
 
 .no-chat-selected {
@@ -354,6 +356,8 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
+    height: 100%;
+    overflow: hidden;
 }
 
 .chat-header {
@@ -395,7 +399,10 @@ body {
 .messages-container {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 20px 60px;
+    height: 0;
+    min-height: 0;
     background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAADLSURBVHgB7dkxDoAgEEXR4f5ntmJ0YUFoNCR8X0nB8BoKFgAAfjFsr9vtZofrep/PesezXq8fvmuNnVpr7P/4cK3/WmsM5xiOcR6HRz/L8C5nOdaxDOda53CW4RzHMpxrOZbrWIZzLMc51jEM77qOZbjWcQzDuZbhWut0ltEax9WxSmsZjnE4y+FcaxmGcyzXOpzhXMtYpuFcy3CuZTjHMZxjGM61LMN1jmO5xnKstY5juM51DMN1LNdYx7Ws4xjOtQzXca1lONc61gEAAP/mAThYLqMwaNw3AAAAAElFTkSuQmCC');
     background-color: #0b141a;
 }
