@@ -177,6 +177,9 @@ async function saveMessage(message) {
 
         const mediaInfo = await saveMedia(message);
 
+        // Get ack status (0=pending, 1=sent, 2=delivered, 3=read, 4=played)
+        const ack = message.ack || 0;
+
         db.insertMessage(
             message.id._serialized,
             chat.id._serialized,
@@ -190,7 +193,8 @@ async function saveMessage(message) {
             message.hasMedia,
             mediaInfo.path,
             mediaInfo.mimetype,
-            JSON.stringify(message)
+            JSON.stringify(message),
+            ack
         );
 
         // Update chat last message time
@@ -214,7 +218,8 @@ async function saveMessage(message) {
             isFromMe: message.fromMe,
             hasMedia: message.hasMedia,
             mediaPath: mediaInfo.path,
-            mediaMimetype: mediaInfo.mimetype
+            mediaMimetype: mediaInfo.mimetype,
+            ack: ack
         };
     } catch (err) {
         console.error('Error saving message:', err);
@@ -314,6 +319,14 @@ client.on('message_revoke_everyone', async (message, revokedMsg) => {
             deletedAt: Date.now()
         });
     }
+});
+
+// Message ACK (read receipts) - 0=pending, 1=sent, 2=delivered, 3=read, 4=played
+client.on('message_ack', (message, ack) => {
+    const messageId = message.id._serialized;
+    console.log(`Message ACK: ${messageId} -> ${ack}`);
+    db.updateMessageAck(messageId, ack);
+    io.emit('message_ack', { id: messageId, ack: ack });
 });
 
 // ============ AUTH ROUTES ============

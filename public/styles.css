@@ -504,6 +504,34 @@ body {
     height: 14px;
 }
 
+/* Message Status (Read Receipts) */
+.message-status {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+}
+
+.message-status svg {
+    width: 16px;
+    height: 15px;
+}
+
+.message-status.pending svg path {
+    fill: rgba(255, 255, 255, 0.5);
+}
+
+.message-status.sent-status svg path {
+    fill: rgba(255, 255, 255, 0.6);
+}
+
+.message-status.delivered svg path {
+    fill: rgba(255, 255, 255, 0.6);
+}
+
+.message-status.read-status svg path {
+    fill: #53bdeb;
+}
+
 .date-separator {
     clear: both;
     text-align: center;

@@ -59,10 +59,18 @@ async function initDatabase() {
             media_mimetype TEXT,
             is_deleted INTEGER DEFAULT 0,
             deleted_at INTEGER,
+            ack INTEGER DEFAULT 0,
             raw_data TEXT,
             created_at INTEGER
         )
     `);
+
+    // Add ack column if not exists (migration for existing databases)
+    try {
+        db.run(`ALTER TABLE messages ADD COLUMN ack INTEGER DEFAULT 0`);
+    } catch (e) {
+        // Column already exists
+    }
 
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`);
@@ -203,14 +211,23 @@ function insertContact(id, number, name, pushname, profilePic, isBusiness) {
     saveDatabase();
 }
 
-function insertMessage(id, chatId, senderId, senderName, body, type, timestamp, isForwarded, isFromMe, hasMedia, mediaPath, mediaMimetype, rawData) {
+function insertMessage(id, chatId, senderId, senderName, body, type, timestamp, isForwarded, isFromMe, hasMedia, mediaPath, mediaMimetype, rawData, ack = 0) {
     if (!db) return;
     const stmt = db.prepare(`
         INSERT OR REPLACE INTO messages
-        (id, chat_id, sender_id, sender_name, body, type, timestamp, is_forwarded, is_from_me, has_media, media_path, media_mimetype, raw_data, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, chat_id, sender_id, sender_name, body, type, timestamp, is_forwarded, is_from_me, has_media, media_path, media_mimetype, ack, raw_data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([sanitize(id), sanitize(chatId), sanitize(senderId), sanitize(senderName), sanitize(body), sanitize(type), sanitize(timestamp), isForwarded ? 1 : 0, isFromMe ? 1 : 0, hasMedia ? 1 : 0, sanitize(mediaPath), sanitize(mediaMimetype), sanitize(rawData), Date.now()]);
+    stmt.run([sanitize(id), sanitize(chatId), sanitize(senderId), sanitize(senderName), sanitize(body), sanitize(type), sanitize(timestamp), isForwarded ? 1 : 0, isFromMe ? 1 : 0, hasMedia ? 1 : 0, sanitize(mediaPath), sanitize(mediaMimetype), sanitize(ack), sanitize(rawData), Date.now()]);
+    stmt.free();
+    saveDatabase();
+}
+
+// Update message ACK status (0=pending, 1=sent, 2=delivered, 3=read, 4=played)
+function updateMessageAck(messageId, ack) {
+    if (!db) return;
+    const stmt = db.prepare(`UPDATE messages SET ack = ? WHERE id = ?`);
+    stmt.run([ack, messageId]);
     stmt.free();
     saveDatabase();
 }
@@ -718,6 +735,7 @@ module.exports = {
     insertChat,
     insertContact,
     insertMessage,
+    updateMessageAck,
     markMessageDeleted,
     getChats,
     getMessages,

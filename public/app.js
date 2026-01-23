@@ -99,6 +99,26 @@ socket.on('message_deleted', (data) => {
     }
 });
 
+// Update message status (read receipts)
+socket.on('message_ack', (data) => {
+    const messageEl = document.querySelector(`[data-message-id="${data.id}"]`);
+    if (messageEl) {
+        const statusEl = messageEl.querySelector('.message-status');
+        if (statusEl) {
+            // Update existing status icon
+            const newStatusHtml = getMessageStatusHtml({ is_from_me: true, ack: data.ack });
+            statusEl.outerHTML = newStatusHtml;
+        } else {
+            // Add status icon if not exists (for sent messages)
+            const metaEl = messageEl.querySelector('.message-meta');
+            if (metaEl && messageEl.classList.contains('sent')) {
+                const newStatusHtml = getMessageStatusHtml({ is_from_me: true, ack: data.ack });
+                metaEl.insertAdjacentHTML('beforeend', newStatusHtml);
+            }
+        }
+    }
+});
+
 socket.on('chats_loaded', () => {
     loadChats();
 });
@@ -216,6 +236,38 @@ function renderMessages(messages, container) {
     });
 }
 
+// Get message status checkmarks HTML
+function getMessageStatusHtml(msg) {
+    const isFromMe = msg.is_from_me || msg.isFromMe;
+    if (!isFromMe) return ''; // Only show status for sent messages
+
+    const ack = msg.ack || 0;
+
+    // ACK values: 0=pending, 1=sent, 2=delivered, 3=read, 4=played
+    if (ack === 0) {
+        // Pending - clock icon
+        return `<span class="message-status pending" title="Pending">
+            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="currentColor" d="M9.75 7.713H8.244V5.359a.5.5 0 0 0-.5-.5H7.65a.5.5 0 0 0-.5.5v2.947a.5.5 0 0 0 .5.5h2.1a.5.5 0 0 0 .5-.5v-.093a.5.5 0 0 0-.5-.5zm-1.5 6.137a5.65 5.65 0 1 1 5.65-5.65 5.656 5.656 0 0 1-5.65 5.65zm0-12.3a6.65 6.65 0 1 0 6.65 6.65 6.658 6.658 0 0 0-6.65-6.65z"></path></svg>
+        </span>`;
+    } else if (ack === 1) {
+        // Sent - single grey check
+        return `<span class="message-status sent-status" title="Sent">
+            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="currentColor" d="M10.91 3.316l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z"></path></svg>
+        </span>`;
+    } else if (ack === 2) {
+        // Delivered - double grey checks
+        return `<span class="message-status delivered" title="Delivered">
+            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="currentColor" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z"></path></svg>
+        </span>`;
+    } else if (ack >= 3) {
+        // Read/Played - double blue checks
+        return `<span class="message-status read-status" title="Read">
+            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="#53bdeb" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z"></path></svg>
+        </span>`;
+    }
+    return '';
+}
+
 // Append single message
 function appendMessage(msg, container) {
     const div = document.createElement('div');
@@ -240,6 +292,7 @@ function appendMessage(msg, container) {
 
     const senderName = msg.sender_name || msg.senderName;
     const deletedBadge = msg.is_deleted ? `<div class="message-deleted-badge"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path></svg> Deleted</div>` : '';
+    const statusHtml = getMessageStatusHtml(msg);
 
     div.innerHTML = `
         <div class="message-bubble">
@@ -249,6 +302,7 @@ function appendMessage(msg, container) {
             ${deletedBadge}
             <div class="message-meta">
                 <span class="message-time">${formatTime(msg.timestamp)}</span>
+                ${statusHtml}
             </div>
         </div>
     `;
