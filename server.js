@@ -329,6 +329,19 @@ client.on('message_ack', (message, ack) => {
     io.emit('message_ack', { id: messageId, ack: ack });
 });
 
+// Message edited
+client.on('message_edit', async (message, newBody, prevBody) => {
+    const messageId = message.id._serialized;
+    console.log(`Message EDITED: ${messageId} - "${prevBody}" -> "${newBody}"`);
+    db.markMessageEdited(messageId, newBody, Date.now());
+    io.emit('message_edited', {
+        id: messageId,
+        newBody: newBody,
+        prevBody: prevBody,
+        editedAt: Date.now()
+    });
+});
+
 // ============ AUTH ROUTES ============
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
@@ -534,6 +547,24 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
 app.get('/api/deleted', authMiddleware, (req, res) => {
     try {
         const messages = db.getDeletedMessages();
+        res.json(messages);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/edited', authMiddleware, (req, res) => {
+    try {
+        const messages = db.getEditedMessages();
+        res.json(messages);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/modified', authMiddleware, (req, res) => {
+    try {
+        const messages = db.getModifiedMessages();
         res.json(messages);
     } catch (err) {
         res.status(500).json({ error: err.message });

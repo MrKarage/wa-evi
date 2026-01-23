@@ -59,22 +59,33 @@ async function initDatabase() {
             media_mimetype TEXT,
             is_deleted INTEGER DEFAULT 0,
             deleted_at INTEGER,
+            is_edited INTEGER DEFAULT 0,
+            edited_at INTEGER,
+            original_body TEXT,
             ack INTEGER DEFAULT 0,
             raw_data TEXT,
             created_at INTEGER
         )
     `);
 
-    // Add ack column if not exists (migration for existing databases)
+    // Migration: Add new columns if not exists
     try {
         db.run(`ALTER TABLE messages ADD COLUMN ack INTEGER DEFAULT 0`);
-    } catch (e) {
-        // Column already exists
-    }
+    } catch (e) {}
+    try {
+        db.run(`ALTER TABLE messages ADD COLUMN is_edited INTEGER DEFAULT 0`);
+    } catch (e) {}
+    try {
+        db.run(`ALTER TABLE messages ADD COLUMN edited_at INTEGER`);
+    } catch (e) {}
+    try {
+        db.run(`ALTER TABLE messages ADD COLUMN original_body TEXT`);
+    } catch (e) {}
 
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_deleted ON messages(is_deleted)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_messages_edited ON messages(is_edited)`);
 
     // Users table
     db.run(`
@@ -267,6 +278,40 @@ function getMessages(chatId) {
 function getDeletedMessages() {
     if (!db) return [];
     const results = db.exec(`SELECT * FROM messages WHERE is_deleted = 1 ORDER BY deleted_at DESC`);
+    return resultsToObjects(results);
+}
+
+// Mark message as edited and save original content
+function markMessageEdited(id, newBody, editedAt) {
+    if (!db) return;
+    // First get the original body if not already edited
+    const stmt = db.prepare(`SELECT body, original_body, is_edited FROM messages WHERE id = ?`);
+    stmt.bind([id]);
+    let originalBody = null;
+    if (stmt.step()) {
+        const row = stmt.getAsObject();
+        // Keep the very first original body
+        originalBody = row.is_edited ? row.original_body : row.body;
+    }
+    stmt.free();
+
+    // Update the message
+    const updateStmt = db.prepare(`UPDATE messages SET body = ?, is_edited = 1, edited_at = ?, original_body = ? WHERE id = ?`);
+    updateStmt.run([newBody, editedAt, originalBody, id]);
+    updateStmt.free();
+    saveDatabase();
+}
+
+function getEditedMessages() {
+    if (!db) return [];
+    const results = db.exec(`SELECT * FROM messages WHERE is_edited = 1 ORDER BY edited_at DESC`);
+    return resultsToObjects(results);
+}
+
+// Get all modified messages (deleted or edited)
+function getModifiedMessages() {
+    if (!db) return [];
+    const results = db.exec(`SELECT * FROM messages WHERE is_deleted = 1 OR is_edited = 1 ORDER BY COALESCE(deleted_at, edited_at) DESC`);
     return resultsToObjects(results);
 }
 
@@ -737,9 +782,12 @@ module.exports = {
     insertMessage,
     updateMessageAck,
     markMessageDeleted,
+    markMessageEdited,
     getChats,
     getMessages,
     getDeletedMessages,
+    getEditedMessages,
+    getModifiedMessages,
     searchMessages,
     // User management
     createUser,

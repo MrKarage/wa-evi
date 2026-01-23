@@ -14,14 +14,14 @@ const qrCode = document.getElementById('qr-code');
 const chatList = document.getElementById('chat-list');
 const noChatSelected = document.getElementById('no-chat-selected');
 const chatView = document.getElementById('chat-view');
-const deletedView = document.getElementById('deleted-view');
+const modifiedView = document.getElementById('modified-view');
 const messagesContainer = document.getElementById('messages-container');
-const deletedMessagesContainer = document.getElementById('deleted-messages-container');
+const modifiedMessagesContainer = document.getElementById('modified-messages-container');
 const chatName = document.getElementById('chat-name');
 const chatStatus = document.getElementById('chat-status');
 const searchInput = document.getElementById('search-input');
-const showDeletedBtn = document.getElementById('show-deleted-btn');
-const closeDeletedBtn = document.getElementById('close-deleted-btn');
+const showModifiedBtn = document.getElementById('show-modified-btn');
+const closeModifiedBtn = document.getElementById('close-modified-btn');
 const imageModal = document.getElementById('image-modal');
 const modalImage = document.getElementById('modal-image');
 const usernameDisplay = document.getElementById('username-display');
@@ -119,6 +119,32 @@ socket.on('message_ack', (data) => {
     }
 });
 
+// Update message when edited
+socket.on('message_edited', (data) => {
+    const messageEl = document.querySelector(`[data-message-id="${data.id}"]`);
+    if (messageEl) {
+        // Update message text
+        const textEl = messageEl.querySelector('.message-text');
+        if (textEl) {
+            textEl.textContent = data.newBody;
+        }
+
+        // Add edited indicator if not exists
+        if (!messageEl.querySelector('.message-edited-badge')) {
+            const metaEl = messageEl.querySelector('.message-meta');
+            if (metaEl) {
+                const badge = document.createElement('span');
+                badge.className = 'message-edited-badge';
+                badge.title = `Original: ${data.prevBody}`;
+                badge.textContent = 'edited';
+                metaEl.insertBefore(badge, metaEl.firstChild);
+            }
+        }
+
+        messageEl.classList.add('edited');
+    }
+});
+
 socket.on('chats_loaded', () => {
     loadChats();
 });
@@ -202,7 +228,7 @@ async function selectChat(chat) {
     chatStatus.textContent = `${chat.message_count || 0} messages`;
 
     noChatSelected.classList.add('hidden');
-    deletedView.classList.add('hidden');
+    modifiedView.classList.add('hidden');
     chatView.classList.remove('hidden');
 
     // Show/hide message input based on permission
@@ -271,7 +297,9 @@ function getMessageStatusHtml(msg) {
 // Append single message
 function appendMessage(msg, container) {
     const div = document.createElement('div');
-    div.className = `message ${msg.is_from_me || msg.isFromMe ? 'sent' : 'received'} ${msg.is_deleted ? 'deleted' : ''}`;
+    const isDeleted = msg.is_deleted || false;
+    const isEdited = msg.is_edited || false;
+    div.className = `message ${msg.is_from_me || msg.isFromMe ? 'sent' : 'received'} ${isDeleted ? 'deleted' : ''} ${isEdited ? 'edited' : ''}`;
     div.dataset.messageId = msg.id;
 
     let mediaHtml = '';
@@ -291,7 +319,8 @@ function appendMessage(msg, container) {
     }
 
     const senderName = msg.sender_name || msg.senderName;
-    const deletedBadge = msg.is_deleted ? `<div class="message-deleted-badge"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path></svg> Deleted</div>` : '';
+    const deletedBadge = isDeleted ? `<div class="message-deleted-badge"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path></svg> Deleted</div>` : '';
+    const editedBadge = isEdited ? `<span class="message-edited-badge" title="Original: ${escapeHtml(msg.original_body || '')}">edited</span>` : '';
     const statusHtml = getMessageStatusHtml(msg);
 
     div.innerHTML = `
@@ -301,6 +330,7 @@ function appendMessage(msg, container) {
             <div class="message-text">${escapeHtml(msg.body || '')}</div>
             ${deletedBadge}
             <div class="message-meta">
+                ${editedBadge}
                 <span class="message-time">${formatTime(msg.timestamp)}</span>
                 ${statusHtml}
             </div>
@@ -1047,27 +1077,141 @@ socket.on('chat_assigned', (data) => {
     }
 });
 
-// Show deleted messages
-showDeletedBtn.addEventListener('click', async () => {
+// Modified messages (deleted & edited) state
+let modifiedMessages = [];
+let modifiedFilter = 'all';
+
+// Show modified messages (deleted & edited)
+showModifiedBtn?.addEventListener('click', async () => {
     currentChatId = null;
     document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
     noChatSelected.classList.add('hidden');
     chatView.classList.add('hidden');
-    deletedView.classList.remove('hidden');
+    modifiedView.classList.remove('hidden');
 
-    try {
-        const res = await fetch('/api/deleted');
-        const messages = await res.json();
-        renderMessages(messages, deletedMessagesContainer);
-    } catch (err) {
-        console.error('Error loading deleted messages:', err);
-    }
+    await loadModifiedMessages();
 });
 
-closeDeletedBtn.addEventListener('click', () => {
-    deletedView.classList.add('hidden');
+closeModifiedBtn?.addEventListener('click', () => {
+    modifiedView.classList.add('hidden');
     noChatSelected.classList.remove('hidden');
 });
+
+// Load modified messages from API
+async function loadModifiedMessages() {
+    try {
+        const res = await fetch('/api/modified');
+        modifiedMessages = await res.json();
+        renderModifiedMessages();
+    } catch (err) {
+        console.error('Error loading modified messages:', err);
+    }
+}
+
+// Render modified messages with current filter
+function renderModifiedMessages() {
+    let filtered = modifiedMessages;
+
+    if (modifiedFilter === 'deleted') {
+        filtered = modifiedMessages.filter(m => m.is_deleted);
+    } else if (modifiedFilter === 'edited') {
+        filtered = modifiedMessages.filter(m => m.is_edited && !m.is_deleted);
+    }
+
+    modifiedMessagesContainer.innerHTML = '';
+
+    if (filtered.length === 0) {
+        modifiedMessagesContainer.innerHTML = `
+            <div class="empty-state">
+                <p>No ${modifiedFilter === 'all' ? 'modified' : modifiedFilter} messages found</p>
+            </div>
+        `;
+        return;
+    }
+
+    filtered.forEach(msg => {
+        const card = document.createElement('div');
+        const isDeleted = msg.is_deleted || false;
+        const isEdited = msg.is_edited || false;
+
+        card.className = `modified-message-card ${isDeleted ? 'deleted' : ''} ${isEdited ? 'edited' : ''}`;
+
+        const modTime = isDeleted ? msg.deleted_at : msg.edited_at;
+        const modType = isDeleted ? 'Deleted' : 'Edited';
+        const modTypeClass = isDeleted ? 'deleted-type' : 'edited-type';
+
+        let mediaHtml = '';
+        if (msg.has_media && msg.media_path) {
+            if (msg.media_mimetype?.startsWith('image/')) {
+                mediaHtml = `<div class="modified-media"><img src="${msg.media_path}" alt="Image"></div>`;
+            } else {
+                mediaHtml = `<div class="modified-media">[Attachment]</div>`;
+            }
+        }
+
+        card.innerHTML = `
+            <div class="modified-card-header">
+                <span class="modified-chat-name">${escapeHtml(msg.chat_name || msg.chat_id)}</span>
+                <span class="modified-type-badge ${modTypeClass}">${modType}</span>
+            </div>
+            <div class="modified-card-body">
+                ${mediaHtml}
+                <div class="modified-message-content">
+                    ${isEdited && msg.original_body ? `
+                        <div class="original-content">
+                            <span class="content-label">Original:</span>
+                            <span class="content-text strikethrough">${escapeHtml(msg.original_body)}</span>
+                        </div>
+                        <div class="current-content">
+                            <span class="content-label">Current:</span>
+                            <span class="content-text">${escapeHtml(msg.body || '')}</span>
+                        </div>
+                    ` : `
+                        <div class="current-content">
+                            <span class="content-text">${escapeHtml(msg.body || '[Media message]')}</span>
+                        </div>
+                    `}
+                </div>
+            </div>
+            <div class="modified-card-footer">
+                <span class="modified-sender">${escapeHtml(msg.sender_name || 'Unknown')}</span>
+                <span class="modified-time">
+                    Sent: ${formatDateTime(msg.timestamp)}
+                    ${modTime ? ` | ${modType}: ${formatDateTime(modTime)}` : ''}
+                </span>
+            </div>
+        `;
+
+        modifiedMessagesContainer.appendChild(card);
+    });
+}
+
+// Filter button handlers
+document.querySelectorAll('.modified-filter-btn')?.forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.modified-filter-btn').forEach(b => {
+            b.classList.remove('active', 'btn-primary');
+            b.classList.add('btn-secondary');
+        });
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('active', 'btn-primary');
+
+        modifiedFilter = btn.dataset.filter;
+        renderModifiedMessages();
+    });
+});
+
+// Format full date time
+function formatDateTime(timestamp) {
+    if (!timestamp) return '';
+    return new Date(timestamp).toLocaleString([], {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
 
 // Search
 let searchTimeout2;
