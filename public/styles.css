@@ -302,13 +302,25 @@ body {
     text-overflow: ellipsis;
 }
 
+.chat-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 .chat-item-badge {
     background: var(--wa-green);
     color: #fff;
-    font-size: 0.75rem;
-    padding: 2px 6px;
-    border-radius: 10px;
-    margin-left: 8px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Chat Area */
@@ -508,28 +520,25 @@ body {
 .message-status {
     display: inline-flex;
     align-items: center;
-    margin-left: 4px;
+    margin-left: 6px;
+    font-size: 0.85rem;
+    letter-spacing: -2px;
 }
 
-.message-status svg {
-    width: 16px;
-    height: 15px;
+.message-status.pending {
+    color: rgba(255, 255, 255, 0.5);
 }
 
-.message-status.pending svg path {
-    fill: rgba(255, 255, 255, 0.5);
+.message-status.sent-status {
+    color: rgba(255, 255, 255, 0.7);
 }
 
-.message-status.sent-status svg path {
-    fill: rgba(255, 255, 255, 0.6);
+.message-status.delivered {
+    color: rgba(255, 255, 255, 0.7);
 }
 
-.message-status.delivered svg path {
-    fill: rgba(255, 255, 255, 0.6);
-}
-
-.message-status.read-status svg path {
-    fill: #53bdeb;
+.message-status.read-status {
+    color: #53bdeb;
 }
 
 /* Edited Message Badge */

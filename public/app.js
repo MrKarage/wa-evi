@@ -45,7 +45,7 @@ async function checkAuth() {
             }
             return true;
         }
-    } catch (e) {}
+    } catch (e) { }
     window.location.href = '/login.html';
     return false;
 }
@@ -60,6 +60,16 @@ socket.on('connect_error', (err) => {
 socket.on('qr', (qr) => {
     if (currentUser?.is_admin) {
         qrCode.innerHTML = `<img src="${qr}" alt="QR Code">`;
+        qrScreen.classList.remove('hidden');
+        dashboard.classList.add('hidden');
+    }
+});
+
+// Handle WhatsApp loading progress
+socket.on('loading', (data) => {
+    const loadingText = qrScreen.querySelector('.qr-loading p');
+    if (loadingText) {
+        loadingText.textContent = `WhatsApp loading: ${data.percent}%`;
     }
 });
 
@@ -74,17 +84,64 @@ socket.on('status', (data) => {
         qrScreen.classList.add('hidden');
         dashboard.classList.remove('hidden');
         loadChats();
-    } else if (data.user?.is_admin) {
-        // Show QR screen only for admin
+    } else if (data.qr && currentUser?.is_admin) {
+        // Show QR if available
+        qrCode.innerHTML = `<img src="${data.qr}" alt="QR Code">`;
+        qrScreen.classList.remove('hidden');
+    } else if (!currentUser?.is_admin) {
+        // Non-admin waiting
+        const loadingText = qrScreen.querySelector('.qr-loading p');
+        if (loadingText) {
+            loadingText.textContent = 'Waiting for admin to connect WhatsApp...';
+        }
     }
 });
 
 socket.on('new_message', (message) => {
+    // If this message is for a chat we're not viewing, update the unread badge
+    if (currentChatId !== message.chatId && !message.isFromMe) {
+        const chatItem = document.querySelector(`[data-chat-id="${message.chatId}"]`);
+        if (chatItem) {
+            let badge = chatItem.querySelector('.chat-item-badge');
+            if (badge) {
+                // Increment existing badge
+                const current = parseInt(badge.textContent) || 0;
+                badge.textContent = current >= 99 ? '99+' : current + 1;
+            } else {
+                // Create new badge
+                const preview = chatItem.querySelector('.chat-item-preview');
+                if (preview) {
+                    badge = document.createElement('span');
+                    badge.className = 'chat-item-badge';
+                    badge.textContent = '1';
+                    preview.appendChild(badge);
+                }
+            }
+        }
+    }
+
     loadChats();
     if (currentChatId === message.chatId) {
         appendMessage(message, messagesContainer);
         scrollToBottom();
+
+        // Auto-mark as read since user is viewing this chat
+        fetch(`/api/chats/${encodeURIComponent(message.chatId)}/read`, { method: 'POST' })
+            .catch(() => { });
     }
+});
+
+// Handle chat read events from other clients/tabs
+socket.on('chat_read', (data) => {
+    const chatItem = document.querySelector(`[data-chat-id="${data.chatId}"]`);
+    if (chatItem) {
+        const badge = chatItem.querySelector('.chat-item-badge');
+        if (badge) badge.remove();
+    }
+
+    // Update local chats array
+    const chat = chats.find(c => c.id === data.chatId);
+    if (chat) chat.unread_count = 0;
 });
 
 socket.on('message_deleted', (data) => {
@@ -194,6 +251,8 @@ function renderChatList(chatData) {
 
         const time = chat.last_message_time ? formatTime(chat.last_message_time) : '';
         const preview = chat.last_message || 'No messages';
+        const unreadCount = chat.unread_count || 0;
+        const unreadBadge = unreadCount > 0 ? `<span class="chat-item-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>` : '';
 
         div.innerHTML = `
             <div class="avatar">
@@ -205,7 +264,10 @@ function renderChatList(chatData) {
             <div class="chat-item-info">
                 <div class="chat-item-header">
                     <span class="chat-item-name">${escapeHtml(chat.name || 'Unknown')}</span>
-                    <span class="chat-item-time">${time}</span>
+                    <div class="chat-item-meta">
+                        <span class="chat-item-time">${time}</span>
+                        ${unreadBadge}
+                    </div>
                 </div>
                 <div class="chat-item-preview">${escapeHtml(preview.substring(0, 50))}</div>
             </div>
@@ -239,6 +301,18 @@ async function selectChat(chat) {
         const messages = await res.json();
         renderMessages(messages, messagesContainer);
         scrollToBottom();
+
+        // Mark chat as read if it has unread messages
+        if (chat.unread_count > 0) {
+            fetch(`/api/chats/${encodeURIComponent(chat.id)}/read`, { method: 'POST' })
+                .catch(err => console.error('Error marking chat as read:', err));
+
+            // Update local state immediately for responsive UI
+            chat.unread_count = 0;
+            const chatItem = document.querySelector(`[data-chat-id="${chat.id}"]`);
+            const badge = chatItem?.querySelector('.chat-item-badge');
+            if (badge) badge.remove();
+        }
     } catch (err) {
         console.error('Error loading messages:', err);
     }
@@ -267,29 +341,21 @@ function getMessageStatusHtml(msg) {
     const isFromMe = msg.is_from_me || msg.isFromMe;
     if (!isFromMe) return ''; // Only show status for sent messages
 
-    const ack = msg.ack || 0;
+    const ack = parseInt(msg.ack) || 0;
 
     // ACK values: 0=pending, 1=sent, 2=delivered, 3=read, 4=played
     if (ack === 0) {
         // Pending - clock icon
-        return `<span class="message-status pending" title="Pending">
-            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="currentColor" d="M9.75 7.713H8.244V5.359a.5.5 0 0 0-.5-.5H7.65a.5.5 0 0 0-.5.5v2.947a.5.5 0 0 0 .5.5h2.1a.5.5 0 0 0 .5-.5v-.093a.5.5 0 0 0-.5-.5zm-1.5 6.137a5.65 5.65 0 1 1 5.65-5.65 5.656 5.656 0 0 1-5.65 5.65zm0-12.3a6.65 6.65 0 1 0 6.65 6.65 6.658 6.658 0 0 0-6.65-6.65z"></path></svg>
-        </span>`;
+        return `<span class="message-status pending" title="Pending (ack=0)">🕐</span>`;
     } else if (ack === 1) {
-        // Sent - single grey check
-        return `<span class="message-status sent-status" title="Sent">
-            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="currentColor" d="M10.91 3.316l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z"></path></svg>
-        </span>`;
+        // Sent - single check
+        return `<span class="message-status sent-status" title="Sent (ack=1)">✓</span>`;
     } else if (ack === 2) {
-        // Delivered - double grey checks
-        return `<span class="message-status delivered" title="Delivered">
-            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="currentColor" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z"></path></svg>
-        </span>`;
+        // Delivered - double checks
+        return `<span class="message-status delivered" title="Delivered (ack=2)">✓✓</span>`;
     } else if (ack >= 3) {
         // Read/Played - double blue checks
-        return `<span class="message-status read-status" title="Read">
-            <svg viewBox="0 0 16 15" width="16" height="15"><path fill="#53bdeb" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51zm-4.1 0l-.478-.372a.365.365 0 0 0-.51.063L4.566 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.515.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.063-.51z"></path></svg>
-        </span>`;
+        return `<span class="message-status read-status" title="Read (ack=${ack})">✓✓</span>`;
     }
     return '';
 }
@@ -783,13 +849,13 @@ async function loadPermissionMatrix() {
             <tr>
                 <td>${escapeHtml(user.username)}</td>
                 ${chats.slice(0, 20).map(chat => {
-                    const perm = userPerms.find(p => p.chat_id === chat.id);
-                    let cellClass = 'none';
-                    if (perm?.can_read && perm?.can_send) cellClass = 'both';
-                    else if (perm?.can_read) cellClass = 'read';
-                    else if (perm?.can_send) cellClass = 'send';
-                    return `<td class="matrix-cell ${cellClass}" data-user-id="${user.id}" data-chat-id="${chat.id}" title="${escapeHtml(user.username)} - ${escapeHtml(chat.name || chat.id)}"></td>`;
-                }).join('')}
+            const perm = userPerms.find(p => p.chat_id === chat.id);
+            let cellClass = 'none';
+            if (perm?.can_read && perm?.can_send) cellClass = 'both';
+            else if (perm?.can_read) cellClass = 'read';
+            else if (perm?.can_send) cellClass = 'send';
+            return `<td class="matrix-cell ${cellClass}" data-user-id="${user.id}" data-chat-id="${chat.id}" title="${escapeHtml(user.username)} - ${escapeHtml(chat.name || chat.id)}"></td>`;
+        }).join('')}
             </tr>
         `;
     }).join('');
@@ -976,6 +1042,27 @@ document.getElementById('add-keyword-btn')?.addEventListener('click', async () =
     document.getElementById('new-keyword').value = '';
     document.getElementById('keyword-priority').value = '0';
     loadSettingsData();
+});
+
+// WhatsApp logout
+document.getElementById('logout-whatsapp-btn')?.addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to logout from WhatsApp? You will need to scan QR code again to reconnect.')) {
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/admin/whatsapp/logout', { method: 'POST' });
+        const data = await res.json();
+
+        if (res.ok) {
+            alert('WhatsApp logged out successfully. Redirecting to QR scan...');
+            window.location.reload();
+        } else {
+            alert('Failed to logout: ' + data.error);
+        }
+    } catch (err) {
+        alert('Failed to logout: ' + err.message);
+    }
 });
 
 // Load assignments data

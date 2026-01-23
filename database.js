@@ -2,21 +2,44 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, 'whatsapp_archive.db');
+// Default database path (used when no phone number provided)
+const DEFAULT_DB_NAME = 'whatsapp_archive.db';
+let DB_PATH = path.join(__dirname, DEFAULT_DB_NAME);
 
 let db = null;
 let SQL = null;
+let currentPhoneNumber = null;
 
-// Initialize database
-async function initDatabase() {
+// Get database path for a specific phone number
+function getDbPath(phoneNumber) {
+    if (!phoneNumber) {
+        return path.join(__dirname, DEFAULT_DB_NAME);
+    }
+    // Sanitize phone number for filename (remove non-alphanumeric)
+    const sanitized = phoneNumber.replace(/[^0-9]/g, '');
+    return path.join(__dirname, `whatsapp_archive_${sanitized}.db`);
+}
+
+// Initialize database (optionally with phone number for per-account separation)
+async function initDatabase(phoneNumber = null) {
     SQL = await initSqlJs();
+
+    // Set database path based on phone number
+    if (phoneNumber) {
+        currentPhoneNumber = phoneNumber;
+        DB_PATH = getDbPath(phoneNumber);
+        console.log(`Using database for account: ${phoneNumber}`);
+        console.log(`Database file: ${DB_PATH}`);
+    }
 
     // Load existing database or create new one
     if (fs.existsSync(DB_PATH)) {
         const buffer = fs.readFileSync(DB_PATH);
         db = new SQL.Database(buffer);
+        console.log(`Loaded existing database: ${path.basename(DB_PATH)}`);
     } else {
         db = new SQL.Database();
+        console.log(`Created new database: ${path.basename(DB_PATH)}`);
     }
 
     // Create tables
@@ -27,9 +50,15 @@ async function initDatabase() {
             is_group INTEGER DEFAULT 0,
             profile_pic TEXT,
             last_message_time INTEGER,
+            unread_count INTEGER DEFAULT 0,
             created_at INTEGER
         )
     `);
+
+    // Migration: Add unread_count column if not exists
+    try {
+        db.run(`ALTER TABLE chats ADD COLUMN unread_count INTEGER DEFAULT 0`);
+    } catch (e) { }
 
     db.run(`
         CREATE TABLE IF NOT EXISTS contacts (
@@ -71,16 +100,19 @@ async function initDatabase() {
     // Migration: Add new columns if not exists
     try {
         db.run(`ALTER TABLE messages ADD COLUMN ack INTEGER DEFAULT 0`);
-    } catch (e) {}
+    } catch (e) { }
+
+    // Fix NULL ack values
+    db.run(`UPDATE messages SET ack = 0 WHERE ack IS NULL`);
     try {
         db.run(`ALTER TABLE messages ADD COLUMN is_edited INTEGER DEFAULT 0`);
-    } catch (e) {}
+    } catch (e) { }
     try {
         db.run(`ALTER TABLE messages ADD COLUMN edited_at INTEGER`);
-    } catch (e) {}
+    } catch (e) { }
     try {
         db.run(`ALTER TABLE messages ADD COLUMN original_body TEXT`);
-    } catch (e) {}
+    } catch (e) { }
 
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`);
@@ -200,13 +232,36 @@ function sanitize(val) {
 }
 
 // Database operations
-function insertChat(id, name, isGroup, profilePic, lastMessageTime) {
+// unreadCount: number to set, null to preserve existing value
+function insertChat(id, name, isGroup, profilePic, lastMessageTime, unreadCount = null) {
     if (!db) return;
+
+    // If unreadCount is null, preserve existing value or default to 0
+    let finalUnreadCount = 0;
+    if (unreadCount === null) {
+        // Check existing value
+        const existing = db.exec(`SELECT unread_count FROM chats WHERE id = '${id.replace(/'/g, "''")}'`);
+        if (existing.length > 0 && existing[0].values.length > 0) {
+            finalUnreadCount = existing[0].values[0][0] || 0;
+        }
+    } else {
+        finalUnreadCount = unreadCount;
+    }
+
     const stmt = db.prepare(`
-        INSERT OR REPLACE INTO chats (id, name, is_group, profile_pic, last_message_time, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO chats (id, name, is_group, profile_pic, last_message_time, unread_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([sanitize(id), sanitize(name), isGroup ? 1 : 0, sanitize(profilePic), sanitize(lastMessageTime), Date.now()]);
+    stmt.run([sanitize(id), sanitize(name), isGroup ? 1 : 0, sanitize(profilePic), sanitize(lastMessageTime), sanitize(finalUnreadCount), Date.now()]);
+    stmt.free();
+    saveDatabase();
+}
+
+// Update unread count for a chat (used when marking as read)
+function updateChatUnreadCount(chatId, unreadCount) {
+    if (!db) return;
+    const stmt = db.prepare(`UPDATE chats SET unread_count = ? WHERE id = ?`);
+    stmt.run([unreadCount, chatId]);
     stmt.free();
     saveDatabase();
 }
@@ -823,5 +878,7 @@ module.exports = {
     findKeywordMatch,
     // Auto-assignment
     getAvailableAgents,
-    autoAssignChat
+    autoAssignChat,
+    // Unread count
+    updateChatUnreadCount
 };

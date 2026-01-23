@@ -87,6 +87,26 @@ const client = new Client({
 
 let isReady = false;
 let currentQR = null;
+let clientInitializing = false;
+
+// Retry wrapper for puppeteer operations (handles detached frame errors)
+async function withRetry(operation, maxRetries = 2, delay = 500) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await operation();
+        } catch (err) {
+            const isRetryable = err.message?.includes('detached Frame') ||
+                err.message?.includes('Execution context was destroyed') ||
+                err.message?.includes('Protocol error');
+
+            if (isRetryable && attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, delay * attempt));
+                continue;
+            }
+            throw err;
+        }
+    }
+}
 
 // Save media file
 async function saveMedia(message) {
@@ -109,19 +129,23 @@ async function saveMedia(message) {
 }
 
 // Save chat to database
-async function saveChat(chat) {
+async function saveChat(chat, unreadCount = null) {
     try {
         let profilePic = null;
         try {
             profilePic = await chat.getContact().then(c => c.getProfilePicUrl());
-        } catch (e) {}
+        } catch (e) { }
+
+        // Use provided unreadCount or get from chat object
+        const unread = unreadCount !== null ? unreadCount : (chat.unreadCount || 0);
 
         db.insertChat(
             chat.id._serialized,
             chat.name || chat.id.user,
             chat.isGroup,
             profilePic,
-            Date.now()
+            Date.now(),
+            unread
         );
     } catch (err) {
         console.error('Error saving chat:', err);
@@ -134,7 +158,7 @@ async function saveContact(contact) {
         let profilePic = null;
         try {
             profilePic = await contact.getProfilePicUrl();
-        } catch (e) {}
+        } catch (e) { }
 
         db.insertContact(
             contact.id._serialized,
@@ -149,10 +173,11 @@ async function saveContact(contact) {
     }
 }
 
-// Save message to database
+// Save message to database (with retry for detached frame errors)
 async function saveMessage(message) {
     try {
-        const chat = await message.getChat();
+        // Use retry wrapper for chat retrieval (most common failure point)
+        const chat = await withRetry(() => message.getChat());
 
         // For sent messages, contact info might not be available the same way
         let senderId, senderName;
@@ -163,7 +188,7 @@ async function saveMessage(message) {
         } else {
             // For received messages, get contact info
             try {
-                const contact = await message.getContact();
+                const contact = await withRetry(() => message.getContact());
                 senderId = contact.id._serialized;
                 senderName = contact.pushname || contact.name || contact.number || 'Unknown';
                 await saveContact(contact);
@@ -197,13 +222,15 @@ async function saveMessage(message) {
             ack
         );
 
-        // Update chat last message time
+        // Update chat last message time (preserve unread count for incoming messages)
+        const newUnread = message.fromMe ? 0 : undefined; // Don't change unread for incoming
         db.insertChat(
             chat.id._serialized,
             chat.name || chat.id.user,
             chat.isGroup,
             null,
-            message.timestamp * 1000
+            message.timestamp * 1000,
+            newUnread
         );
 
         return {
@@ -234,37 +261,63 @@ client.on('qr', async (qr) => {
     io.emit('qr', currentQR);
 });
 
+// Handle loading screen (WhatsApp is loading)
+client.on('loading_screen', (percent, message) => {
+    console.log(`WhatsApp loading: ${percent}% - ${message}`);
+    io.emit('loading', { percent, message });
+});
+
 client.on('ready', async () => {
     console.log('WhatsApp client is ready!');
     isReady = true;
     currentQR = null;
     io.emit('ready');
 
+    // Get the connected phone number and reinitialize database for this account
+    try {
+        const info = client.info;
+        const phoneNumber = info?.wid?.user || info?.me?.user;
+        if (phoneNumber) {
+            console.log(`Connected as: ${phoneNumber}`);
+            // Reinitialize database for this specific account
+            await db.initDatabase(phoneNumber);
+        }
+    } catch (e) {
+        console.log('Could not get phone number, using default database');
+    }
+
     // Load existing chats and their message history
     try {
-        const chats = await client.getChats();
+        const chats = await withRetry(() => client.getChats());
         console.log(`Loading ${Math.min(chats.length, 30)} chats...`);
 
         for (const chat of chats.slice(0, 30)) {
-            await saveChat(chat);
-
-            // Fetch message history for each chat
             try {
-                const messages = await chat.fetchMessages({ limit: 50 });
+                // Debug: log unread count from WhatsApp
+                const unread = chat.unreadCount || 0;
+                if (unread > 0) {
+                    console.log(`  ${chat.name || chat.id.user}: ${unread} unread messages`);
+                }
+                await saveChat(chat, unread);
+
+                // Fetch message history for each chat (with retry)
+                const messages = await withRetry(() => chat.fetchMessages({ limit: 50 }), 2, 1000);
                 console.log(`  ${chat.name || chat.id.user}: ${messages.length} messages`);
 
                 for (const msg of messages) {
                     await saveMessage(msg);
                 }
             } catch (e) {
-                console.error(`  Error fetching messages for ${chat.name}:`, e.message);
+                // Log but continue with other chats
+                console.error(`  Error loading ${chat.name || chat.id.user}:`, e.message);
             }
         }
 
         console.log('Chat history loaded!');
         io.emit('chats_loaded');
     } catch (err) {
-        console.error('Error loading chats:', err);
+        console.error('Error loading chats:', err.message);
+        io.emit('chats_loaded'); // Still emit so UI doesn't hang
     }
 });
 
@@ -521,6 +574,20 @@ app.get('/api/admin/agents', authMiddleware, adminMiddleware, (req, res) => {
     }
 });
 
+// Logout WhatsApp (disconnect and require new QR scan)
+app.post('/api/admin/whatsapp/logout', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        console.log('WhatsApp logout requested by admin');
+        await client.logout();
+        isReady = false;
+        currentQR = null;
+        res.json({ success: true, message: 'WhatsApp logged out successfully' });
+    } catch (err) {
+        console.error('WhatsApp logout error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============ API ROUTES ============
 app.get('/api/status', (req, res) => {
     res.json({ ready: isReady, qr: !isReady ? currentQR : null });
@@ -539,6 +606,34 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     try {
         const messages = db.getMessages(req.params.chatId);
         res.json(messages);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Mark chat as read (clear unread count)
+app.post('/api/chats/:chatId/read', authMiddleware, async (req, res) => {
+    const chatId = decodeURIComponent(req.params.chatId);
+
+    try {
+        // Update database
+        db.updateChatUnreadCount(chatId, 0);
+
+        // Optionally send seen to WhatsApp (mark messages as read on their end)
+        if (isReady) {
+            try {
+                const chat = await client.getChatById(chatId);
+                await chat.sendSeen();
+            } catch (e) {
+                // Ignore WhatsApp errors, local read status is still updated
+                console.log('Could not send seen to WhatsApp:', e.message);
+            }
+        }
+
+        // Notify all clients about the read status
+        io.emit('chat_read', { chatId, unreadCount: 0 });
+
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
