@@ -384,13 +384,71 @@ function checkForceReady() {
                 }
 
                 // Note: Skip loadChatsAndMessages on force-ready as client may not be fully functional
-                // New messages will sync via message_create event
-                // User can trigger manual sync via /api/admin/whatsapp/sync
-                console.log('Force-ready: Skipping initial chat load. New messages will sync automatically.');
+                // Start polling for new messages since events don't work in force-ready state
+                console.log('Force-ready: Starting message polling (events may not work).');
                 console.log('Use /api/admin/whatsapp/sync to manually load chat history.');
                 io.emit('chats_loaded');
+
+                // Start polling for new messages
+                startMessagePolling();
             }
         }, 5000); // Wait 5 seconds after both conditions met
+    }
+}
+
+// Polling for new messages (fallback when events don't work)
+let pollingInterval = null;
+let lastPolledTimestamp = Math.floor(Date.now() / 1000);
+
+async function startMessagePolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+    }
+
+    console.log('Starting message polling every 5 seconds...');
+
+    pollingInterval = setInterval(async () => {
+        if (!isReady) {
+            console.log('Polling skipped: not ready');
+            return;
+        }
+
+        try {
+            const chats = await client.getChats();
+
+            for (const chat of chats.slice(0, 10)) { // Check top 10 chats
+                try {
+                    const messages = await chat.fetchMessages({ limit: 5 });
+
+                    for (const msg of messages) {
+                        // Only process messages newer than last poll
+                        if (msg.timestamp > lastPolledTimestamp) {
+                            const direction = msg.fromMe ? 'SENT' : 'RECEIVED';
+                            logger.whatsapp('POLL', `${direction}: ${msg.body?.substring(0, 30) || '[media]'}`);
+
+                            const savedMessage = await saveMessage(msg);
+                            if (savedMessage) {
+                                io.emit('new_message', savedMessage);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Ignore individual chat errors
+                }
+            }
+
+            lastPolledTimestamp = Math.floor(Date.now() / 1000);
+        } catch (e) {
+            console.log('Polling error:', e.message);
+        }
+    }, 5000); // Poll every 5 seconds
+}
+
+function stopMessagePolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+        console.log('Message polling stopped');
     }
 }
 
