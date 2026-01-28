@@ -8,6 +8,7 @@ const fs = require('fs');
 const mime = require('mime-types');
 const cookieParser = require('cookie-parser');
 const db = require('./database');
+const logger = require('./logger');
 
 const app = express();
 const server = createServer(app);
@@ -257,20 +258,20 @@ async function saveMessage(message) {
 
 // WhatsApp Events
 client.on('qr', async (qr) => {
-    console.log('QR code received');
+    logger.whatsapp('QR', 'QR code received');
     currentQR = await QRCode.toDataURL(qr);
     io.emit('qr', currentQR);
 });
 
 // Handle loading screen (WhatsApp is loading)
 client.on('loading_screen', (percent, message) => {
-    console.log(`WhatsApp loading: ${percent}% - ${message}`);
+    logger.whatsapp('LOADING', `${percent}% - ${message}`);
     isLoading = true; // Mark that we're loading (means session exists)
     io.emit('loading', { percent, message });
 });
 
 client.on('ready', async () => {
-    console.log('WhatsApp client is ready!');
+    logger.whatsapp('READY', 'WhatsApp client is ready!');
     isReady = true;
     isLoading = false;
     currentQR = null;
@@ -325,17 +326,17 @@ client.on('ready', async () => {
 });
 
 client.on('authenticated', () => {
-    console.log('Authentication successful!');
+    logger.whatsapp('AUTH', 'Authentication successful!');
     io.emit('authenticated');
 });
 
 client.on('auth_failure', (msg) => {
-    console.error('Authentication failed:', msg);
+    logger.error('Authentication failed:', msg);
     io.emit('auth_failure', msg);
 });
 
 client.on('disconnected', (reason) => {
-    console.log('Client disconnected:', reason);
+    logger.whatsapp('DISCONNECT', 'Client disconnected:', reason);
     isReady = false;
     io.emit('disconnected', reason);
 });
@@ -797,25 +798,25 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-    console.log(`User ${socket.user.username} connected`);
-    console.log(`  -> DEBUG: isReady=${isReady}, isLoading=${isLoading}, hasQR=${!!currentQR}`);
+    logger.socket('CONNECT', `User ${socket.user.username} connected`);
+    logger.debug(`State: isReady=${isReady}, isLoading=${isLoading}, hasQR=${!!currentQR}`);
 
     // Join user-specific room
     socket.join(`user_${socket.user.id}`);
 
     // Send current status - include loading state so frontend knows if session is being restored
-    console.log(`  -> Emitting status: ready=${isReady}, loading=${isLoading}`);
+    logger.socket('EMIT', `status: ready=${isReady}, loading=${isLoading}`);
     socket.emit('status', { ready: isReady, loading: isLoading, user: socket.user });
 
     // If already ready, emit ready event so frontend switches to dashboard
     if (isReady) {
-        console.log(`  -> Emitting 'ready' event`);
+        logger.socket('EMIT', 'ready event');
         socket.emit('ready');
     } else if (currentQR && socket.user.is_admin) {
-        console.log(`  -> Emitting 'qr' event`);
+        logger.socket('EMIT', 'qr event');
         socket.emit('qr', currentQR);
     } else {
-        console.log(`  -> Not ready yet, no QR to show`);
+        logger.debug('Not ready yet, no QR to show');
     }
 
     // Handle typing events from client
