@@ -6,7 +6,12 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js --dev",
-    "postinstall": "node scripts/patch-whatsapp.js"
+    "postinstall": "node scripts/patch-whatsapp.js",
+    "db": "node scripts/db-query.js",
+    "db:today": "node scripts/db-query.js today",
+    "db:orders": "node scripts/db-query.js orders",
+    "db:stats": "node scripts/db-query.js stats",
+    "db:chats": "node scripts/db-query.js chats"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

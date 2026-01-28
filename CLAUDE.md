@@ -15,7 +15,8 @@ wa-evi/
 │   ├── app.js         # Frontend JavaScript
 │   └── login.html     # Login page
 ├── scripts/
-│   └── patch-whatsapp.js  # Patches whatsapp-web.js library
+│   ├── patch-whatsapp.js  # Patches whatsapp-web.js library
+│   └── db-query.js        # Database query helper
 ├── media/             # Downloaded media files
 ├── logs/              # Log files (only in dev mode)
 └── .wwebjs_auth/      # WhatsApp session data
@@ -48,13 +49,34 @@ curl -s -b cookies.txt "http://100.71.26.11:3000/api/admin/exec?cmd=dir"
 - **Engine**: SQLite via sql.js (in-memory, persisted to file)
 - **Tables**: chats, messages, contacts, users, sessions, permissions, settings, assignments, keyword_rules
 
-### Query messages locally
-```javascript
-const initSqlJs = require('sql.js');
-const fs = require('fs');
-const SQL = await initSqlJs();
-const db = new SQL.Database(fs.readFileSync('whatsapp_archive_6281252856896.db'));
-const result = db.exec('SELECT * FROM messages ORDER BY timestamp DESC LIMIT 10');
+### Database Query Scripts
+```bash
+# Show today's messages
+npm run db:today
+
+# Show potential orders
+npm run db:orders
+
+# Show database stats
+npm run db:stats
+
+# List all chats
+npm run db:chats
+
+# General query commands
+node scripts/db-query.js today              # Today's messages
+node scripts/db-query.js recent 100         # Last 100 messages
+node scripts/db-query.js search "keyword"   # Search messages
+node scripts/db-query.js chat "Bu Evie"     # Messages from specific chat
+node scripts/db-query.js orders             # Order-related messages
+node scripts/db-query.js stats              # Database statistics
+```
+
+### Query on Remote Server
+```bash
+# Run db query on remote via exec endpoint
+curl -s -b cookies.txt "http://100.71.26.11:3000/api/admin/exec?cmd=npm%20run%20db:today"
+curl -s -b cookies.txt "http://100.71.26.11:3000/api/admin/exec?cmd=npm%20run%20db:orders"
 ```
 
 ## Key API Endpoints
