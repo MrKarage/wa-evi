@@ -290,21 +290,34 @@ let loadingComplete = false;
 let authComplete = false;
 let readyTimeout = null;
 
-async function loadChatsAndMessages(retryCount = 0) {
+async function loadChatsAndMessages(options = {}) {
+    const { retryCount = 0, maxChats = 30, maxMessages = 50, lastHoursOnly = 0 } = options;
     const maxRetries = 3;
-    const retryDelay = 5000; // 5 seconds between retries
+    const retryDelay = 5000;
 
     try {
-        // Wait a bit for client to stabilize after force-ready
         if (retryCount === 0) {
             console.log('Waiting for client to stabilize...');
             await new Promise(r => setTimeout(r, 3000));
         }
 
         const chats = await withRetry(() => client.getChats(), 3, 2000);
-        console.log(`Loading ${Math.min(chats.length, 30)} chats...`);
 
-        for (const chat of chats.slice(0, 30)) {
+        // Filter chats by last activity time if lastHoursOnly specified
+        let filteredChats = chats;
+        if (lastHoursOnly > 0) {
+            const cutoffTime = Date.now() - (lastHoursOnly * 60 * 60 * 1000);
+            filteredChats = chats.filter(chat => {
+                const lastMsgTime = chat.timestamp ? chat.timestamp * 1000 : 0;
+                return lastMsgTime >= cutoffTime;
+            });
+            console.log(`Filtering to chats active in last ${lastHoursOnly} hour(s): ${filteredChats.length} chats`);
+        }
+
+        const chatsToLoad = filteredChats.slice(0, maxChats);
+        console.log(`Loading ${chatsToLoad.length} chats...`);
+
+        for (const chat of chatsToLoad) {
             try {
                 const unread = chat.unreadCount || 0;
                 if (unread > 0) {
@@ -312,10 +325,18 @@ async function loadChatsAndMessages(retryCount = 0) {
                 }
                 await saveChat(chat, unread);
 
-                const messages = await withRetry(() => chat.fetchMessages({ limit: 50 }), 2, 1000);
-                console.log(`  ${chat.name || chat.id.user}: ${messages.length} messages`);
+                const messages = await withRetry(() => chat.fetchMessages({ limit: maxMessages }), 2, 1000);
 
-                for (const msg of messages) {
+                // Filter messages by time if lastHoursOnly specified
+                let filteredMessages = messages;
+                if (lastHoursOnly > 0) {
+                    const cutoffTime = Math.floor((Date.now() - (lastHoursOnly * 60 * 60 * 1000)) / 1000);
+                    filteredMessages = messages.filter(msg => msg.timestamp >= cutoffTime);
+                }
+
+                console.log(`  ${chat.name || chat.id.user}: ${filteredMessages.length} messages`);
+
+                for (const msg of filteredMessages) {
                     await saveMessage(msg);
                 }
             } catch (e) {
@@ -328,11 +349,10 @@ async function loadChatsAndMessages(retryCount = 0) {
     } catch (err) {
         console.error('Error loading chats:', err.message);
 
-        // Retry if client not ready yet
         if (retryCount < maxRetries && isReady) {
             console.log(`Retrying chat load in ${retryDelay/1000}s... (attempt ${retryCount + 1}/${maxRetries})`);
             await new Promise(r => setTimeout(r, retryDelay));
-            return loadChatsAndMessages(retryCount + 1);
+            return loadChatsAndMessages({ ...options, retryCount: retryCount + 1 });
         }
 
         io.emit('chats_loaded');
@@ -692,9 +712,14 @@ app.post('/api/admin/whatsapp/sync', authMiddleware, adminMiddleware, async (req
         return res.status(503).json({ error: 'WhatsApp not connected' });
     }
     try {
-        console.log('Sync requested by admin');
-        res.json({ success: true, message: 'Sync started' });
-        await loadChatsAndMessages();
+        const hours = parseInt(req.query.hours) || 0; // 0 = no time limit
+        const maxChats = parseInt(req.query.chats) || 30;
+        const maxMessages = parseInt(req.query.messages) || 50;
+
+        console.log(`Sync requested: hours=${hours}, maxChats=${maxChats}, maxMessages=${maxMessages}`);
+        res.json({ success: true, message: 'Sync started', options: { hours, maxChats, maxMessages } });
+
+        await loadChatsAndMessages({ lastHoursOnly: hours, maxChats, maxMessages });
     } catch (err) {
         console.error('Sync error:', err);
         res.status(500).json({ error: err.message });
