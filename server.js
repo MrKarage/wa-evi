@@ -593,7 +593,7 @@ app.post('/api/admin/whatsapp/logout', authMiddleware, adminMiddleware, async (r
 
 // ============ API ROUTES ============
 app.get('/api/status', (req, res) => {
-    res.json({ ready: isReady, qr: !isReady ? currentQR : null });
+    res.json({ ready: isReady, loading: isLoading, qr: !isReady ? currentQR : null });
 });
 
 app.get('/api/chats', authMiddleware, (req, res) => {

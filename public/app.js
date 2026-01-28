@@ -232,10 +232,20 @@ checkAuth().then(authenticated => {
         fetch('/api/status')
             .then(res => res.json())
             .then(data => {
+                console.log('Initial status:', data);
                 if (data.ready) {
                     qrScreen.classList.add('hidden');
                     dashboard.classList.remove('hidden');
                     loadChats();
+                } else if (data.loading) {
+                    // Session is being restored from disk - show loading message
+                    qrScreen.classList.remove('hidden');
+                    dashboard.classList.add('hidden');
+                    const qrContainer = document.querySelector('.qr-container');
+                    if (qrContainer) {
+                        qrContainer.querySelector('.qr-instructions')?.classList.add('hidden');
+                        qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>';
+                    }
                 } else if (data.qr && currentUser?.is_admin) {
                     qrCode.innerHTML = `<img src="${data.qr}" alt="QR Code">`;
                 } else if (!currentUser?.is_admin) {
