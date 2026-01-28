@@ -355,8 +355,12 @@ function checkForceReady() {
                     console.log('Could not get phone number:', e.message);
                 }
 
-                // Load chats and messages
-                await loadChatsAndMessages();
+                // Note: Skip loadChatsAndMessages on force-ready as client may not be fully functional
+                // New messages will sync via message_create event
+                // User can trigger manual sync via /api/admin/whatsapp/sync
+                console.log('Force-ready: Skipping initial chat load. New messages will sync automatically.');
+                console.log('Use /api/admin/whatsapp/sync to manually load chat history.');
+                io.emit('chats_loaded');
             }
         }, 5000); // Wait 5 seconds after both conditions met
     }
