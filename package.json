@@ -4,7 +4,11 @@
   "description": "Read-only WhatsApp Web client with dashboard and message archiving",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --inspect server.js"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
   },
   "dependencies": {
     "whatsapp-web.js": "^1.25.0",
