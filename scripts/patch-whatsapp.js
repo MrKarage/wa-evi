@@ -11,18 +11,15 @@ if (!fs.existsSync(utilsPath)) {
 let content = fs.readFileSync(utilsPath, 'utf8');
 
 // Check if already patched
-if (content.includes('GroupQueryAndUpdate(chatWid)')) {
+if (content.includes('Skipped: GroupMetadata.update')) {
     console.log('whatsapp-web.js already patched');
     process.exit(0);
 }
 
-// Fix: Replace GroupMetadata.update with GroupQueryAndUpdate
+// Fix: Comment out GroupMetadata.update entirely (causes event system issues)
 const oldCode = 'await window.Store.GroupMetadata.update(chatWid);';
-const newCode = `try {
-                await window.Store.GroupQueryAndUpdate(chatWid);
-            } catch (e) {
-                // Ignore GroupMetadata update errors
-            }`;
+const newCode = `// Skipped: GroupMetadata.update breaks event system
+            // await window.Store.GroupMetadata.update(chatWid);`;
 
 if (content.includes(oldCode)) {
     content = content.replace(oldCode, newCode);
