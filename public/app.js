@@ -100,7 +100,10 @@ socket.on('status', (data) => {
         const qrContainer = document.querySelector('.qr-container');
         if (qrContainer) {
             qrContainer.querySelector('.qr-instructions')?.classList.add('hidden');
-            qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>';
+            qrCode.innerHTML = `
+                <p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>
+                ${currentUser?.is_admin ? '<button onclick="restartWhatsApp()" style="margin-top: 20px; padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Restart WhatsApp</button>' : ''}
+            `;
         }
     } else if (data.qr && currentUser?.is_admin) {
         // No session - show QR for scanning
@@ -116,6 +119,31 @@ socket.on('status', (data) => {
         }
     }
 });
+
+// Handle initialization timeout
+socket.on('init_timeout', (data) => {
+    if (currentUser?.is_admin) {
+        qrCode.innerHTML = `
+            <p style="padding: 20px; color: #e74c3c;">${data.message}</p>
+            <button onclick="restartWhatsApp()" style="margin-top: 10px; padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Restart WhatsApp</button>
+        `;
+    }
+});
+
+// Restart WhatsApp client
+async function restartWhatsApp() {
+    if (!currentUser?.is_admin) return;
+    qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Restarting WhatsApp...</p>';
+    try {
+        const res = await fetch('/api/admin/whatsapp/restart', { method: 'POST' });
+        const data = await res.json();
+        if (!data.success) {
+            qrCode.innerHTML = `<p style="padding: 20px; color: #e74c3c;">Error: ${data.error}</p>`;
+        }
+    } catch (e) {
+        qrCode.innerHTML = `<p style="padding: 20px; color: #e74c3c;">Error: ${e.message}</p>`;
+    }
+}
 
 socket.on('new_message', (message) => {
     // If this message is for a chat we're not viewing, update the unread badge

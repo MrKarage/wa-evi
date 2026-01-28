@@ -259,6 +259,7 @@ async function saveMessage(message) {
 // WhatsApp Events
 client.on('qr', async (qr) => {
     logger.whatsapp('QR', 'QR code received');
+    isLoading = false; // QR means session restore failed, need fresh login
     currentQR = await QRCode.toDataURL(qr);
     io.emit('qr', currentQR);
 });
@@ -332,6 +333,9 @@ client.on('authenticated', () => {
 
 client.on('auth_failure', (msg) => {
     logger.error('Authentication failed:', msg);
+    isLoading = false;
+    isReady = false;
+    currentQR = null;
     io.emit('auth_failure', msg);
 });
 
@@ -584,10 +588,39 @@ app.post('/api/admin/whatsapp/logout', authMiddleware, adminMiddleware, async (r
         console.log('WhatsApp logout requested by admin');
         await client.logout();
         isReady = false;
+        isLoading = false;
         currentQR = null;
         res.json({ success: true, message: 'WhatsApp logged out successfully' });
     } catch (err) {
         console.error('WhatsApp logout error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Restart WhatsApp client (for stuck sessions)
+app.post('/api/admin/whatsapp/restart', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        console.log('WhatsApp restart requested by admin');
+        isReady = false;
+        isLoading = true;
+        currentQR = null;
+
+        // Try to destroy existing client
+        try {
+            await client.destroy();
+        } catch (e) {
+            console.log('Client destroy error (continuing):', e.message);
+        }
+
+        // Reinitialize
+        setTimeout(() => {
+            console.log('Reinitializing WhatsApp client...');
+            client.initialize();
+        }, 2000);
+
+        res.json({ success: true, message: 'WhatsApp client restarting...' });
+    } catch (err) {
+        console.error('WhatsApp restart error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -639,7 +672,12 @@ app.get('/api/admin/server-info', authMiddleware, adminMiddleware, (req, res) =>
 
 // ============ API ROUTES ============
 app.get('/api/status', (req, res) => {
-    res.json({ ready: isReady, loading: isLoading, qr: !isReady ? currentQR : null });
+    res.json({
+        ready: isReady,
+        loading: isLoading,
+        qr: !isReady ? currentQR : null,
+        stuck: isLoading && !isReady && !currentQR // Helpful for debugging
+    });
 });
 
 app.get('/api/chats', authMiddleware, (req, res) => {
@@ -908,6 +946,15 @@ async function start() {
         console.log('Initializing WhatsApp client...');
         isLoading = true; // Mark as loading before client.initialize() so frontend knows
         client.initialize();
+
+        // Timeout for stuck initialization (2 minutes)
+        setTimeout(() => {
+            if (isLoading && !isReady && !currentQR) {
+                console.log('WARNING: Initialization stuck - no QR or ready after 2 minutes');
+                console.log('Session may be corrupted. Use /api/admin/whatsapp/restart to retry.');
+                io.emit('init_timeout', { message: 'Initialization stuck - restart may be needed' });
+            }
+        }, 120000);
     });
 }
 
