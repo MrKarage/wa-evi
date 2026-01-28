@@ -229,27 +229,22 @@ socket.on('chats_loaded', () => {
 // Initialize
 checkAuth().then(authenticated => {
     if (authenticated) {
+        // Always go to dashboard, load chats from database
+        qrScreen.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        loadChats();
+
+        // Check WhatsApp status in background
         fetch('/api/status')
             .then(res => res.json())
             .then(data => {
-                console.log('Initial status:', data);
-                if (data.ready) {
-                    qrScreen.classList.add('hidden');
-                    dashboard.classList.remove('hidden');
-                    loadChats();
-                } else if (data.loading) {
-                    // Session is being restored from disk - show loading message
+                console.log('WhatsApp status:', data);
+                // Update status indicator (optional - could add a status dot in header)
+                if (!data.ready && data.qr && currentUser?.is_admin) {
+                    // Show QR only if admin needs to scan
                     qrScreen.classList.remove('hidden');
                     dashboard.classList.add('hidden');
-                    const qrContainer = document.querySelector('.qr-container');
-                    if (qrContainer) {
-                        qrContainer.querySelector('.qr-instructions')?.classList.add('hidden');
-                        qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>';
-                    }
-                } else if (data.qr && currentUser?.is_admin) {
                     qrCode.innerHTML = `<img src="${data.qr}" alt="QR Code">`;
-                } else if (!currentUser?.is_admin) {
-                    qrScreen.querySelector('.qr-loading p').textContent = 'Waiting for admin to connect WhatsApp...';
                 }
             });
     }
