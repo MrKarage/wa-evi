@@ -282,6 +282,38 @@ let loadingComplete = false;
 let authComplete = false;
 let readyTimeout = null;
 
+async function loadChatsAndMessages() {
+    try {
+        const chats = await withRetry(() => client.getChats());
+        console.log(`Loading ${Math.min(chats.length, 30)} chats...`);
+
+        for (const chat of chats.slice(0, 30)) {
+            try {
+                const unread = chat.unreadCount || 0;
+                if (unread > 0) {
+                    console.log(`  ${chat.name || chat.id.user}: ${unread} unread messages`);
+                }
+                await saveChat(chat, unread);
+
+                const messages = await withRetry(() => chat.fetchMessages({ limit: 50 }), 2, 1000);
+                console.log(`  ${chat.name || chat.id.user}: ${messages.length} messages`);
+
+                for (const msg of messages) {
+                    await saveMessage(msg);
+                }
+            } catch (e) {
+                console.error(`  Error loading ${chat.name || chat.id.user}:`, e.message);
+            }
+        }
+
+        console.log('Chat history loaded!');
+        io.emit('chats_loaded');
+    } catch (err) {
+        console.error('Error loading chats:', err.message);
+        io.emit('chats_loaded');
+    }
+}
+
 function checkForceReady() {
     // If both loading 100% and auth happened but ready didn't fire, force it
     if (loadingComplete && authComplete && !isReady) {
@@ -305,6 +337,9 @@ function checkForceReady() {
                 } catch (e) {
                     console.log('Could not get phone number:', e.message);
                 }
+
+                // Load chats and messages
+                await loadChatsAndMessages();
             }
         }, 5000); // Wait 5 seconds after both conditions met
     }
@@ -337,46 +372,14 @@ client.on('ready', async () => {
         const phoneNumber = info?.wid?.user || info?.me?.user;
         if (phoneNumber) {
             console.log(`Connected as: ${phoneNumber}`);
-            // Reinitialize database for this specific account
             await db.initDatabase(phoneNumber);
         }
     } catch (e) {
         console.log('Could not get phone number, using default database');
     }
 
-    // Load existing chats and their message history
-    try {
-        const chats = await withRetry(() => client.getChats());
-        console.log(`Loading ${Math.min(chats.length, 30)} chats...`);
-
-        for (const chat of chats.slice(0, 30)) {
-            try {
-                // Debug: log unread count from WhatsApp
-                const unread = chat.unreadCount || 0;
-                if (unread > 0) {
-                    console.log(`  ${chat.name || chat.id.user}: ${unread} unread messages`);
-                }
-                await saveChat(chat, unread);
-
-                // Fetch message history for each chat (with retry)
-                const messages = await withRetry(() => chat.fetchMessages({ limit: 50 }), 2, 1000);
-                console.log(`  ${chat.name || chat.id.user}: ${messages.length} messages`);
-
-                for (const msg of messages) {
-                    await saveMessage(msg);
-                }
-            } catch (e) {
-                // Log but continue with other chats
-                console.error(`  Error loading ${chat.name || chat.id.user}:`, e.message);
-            }
-        }
-
-        console.log('Chat history loaded!');
-        io.emit('chats_loaded');
-    } catch (err) {
-        console.error('Error loading chats:', err.message);
-        io.emit('chats_loaded'); // Still emit so UI doesn't hang
-    }
+    // Load chats and messages
+    await loadChatsAndMessages();
 });
 
 client.on('authenticated', () => {
