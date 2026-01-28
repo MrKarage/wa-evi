@@ -270,19 +270,62 @@ async function saveMessage(message) {
 client.on('qr', async (qr) => {
     logger.whatsapp('QR', 'QR code received');
     isLoading = false; // QR means session restore failed, need fresh login
+    loadingComplete = false;
+    authComplete = false;
+    if (readyTimeout) clearTimeout(readyTimeout);
     currentQR = await QRCode.toDataURL(qr);
     io.emit('qr', currentQR);
 });
 
 // Handle loading screen (WhatsApp is loading)
+let loadingComplete = false;
+let authComplete = false;
+let readyTimeout = null;
+
+function checkForceReady() {
+    // If both loading 100% and auth happened but ready didn't fire, force it
+    if (loadingComplete && authComplete && !isReady) {
+        if (readyTimeout) clearTimeout(readyTimeout);
+        readyTimeout = setTimeout(async () => {
+            if (!isReady && loadingComplete && authComplete) {
+                logger.whatsapp('READY-FORCE', 'Forcing ready state (auth+loading complete but no ready event)');
+                isReady = true;
+                isLoading = false;
+                currentQR = null;
+                io.emit('ready');
+
+                // Try to get phone number and init DB
+                try {
+                    const info = client.info;
+                    const phoneNumber = info?.wid?.user || info?.me?.user;
+                    if (phoneNumber) {
+                        console.log(`Connected as: ${phoneNumber}`);
+                        await db.initDatabase(phoneNumber);
+                    }
+                } catch (e) {
+                    console.log('Could not get phone number:', e.message);
+                }
+            }
+        }, 5000); // Wait 5 seconds after both conditions met
+    }
+}
+
 client.on('loading_screen', (percent, message) => {
     logger.whatsapp('LOADING', `${percent}% - ${message}`);
-    isLoading = true; // Mark that we're loading (means session exists)
+    isLoading = true;
     io.emit('loading', { percent, message });
+
+    if (percent >= 99) {
+        loadingComplete = true;
+        checkForceReady();
+    }
 });
 
 client.on('ready', async () => {
     logger.whatsapp('READY', 'WhatsApp client is ready!');
+    if (readyTimeout) clearTimeout(readyTimeout);
+    loadingComplete = false;
+    authComplete = false;
     isReady = true;
     isLoading = false;
     currentQR = null;
@@ -338,7 +381,9 @@ client.on('ready', async () => {
 
 client.on('authenticated', () => {
     logger.whatsapp('AUTH', 'Authentication successful!');
+    authComplete = true;
     io.emit('authenticated');
+    checkForceReady();
 });
 
 client.on('auth_failure', (msg) => {
