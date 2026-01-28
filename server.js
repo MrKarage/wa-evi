@@ -657,6 +657,21 @@ app.get('/api/admin/agents', authMiddleware, adminMiddleware, (req, res) => {
     }
 });
 
+// Sync/reload chats from WhatsApp
+app.post('/api/admin/whatsapp/sync', authMiddleware, adminMiddleware, async (req, res) => {
+    if (!isReady) {
+        return res.status(503).json({ error: 'WhatsApp not connected' });
+    }
+    try {
+        console.log('Sync requested by admin');
+        res.json({ success: true, message: 'Sync started' });
+        await loadChatsAndMessages();
+    } catch (err) {
+        console.error('Sync error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Logout WhatsApp (disconnect and require new QR scan)
 app.post('/api/admin/whatsapp/logout', authMiddleware, adminMiddleware, async (req, res) => {
     try {
