@@ -19,15 +19,21 @@ const MEDIA_DIR = path.join(__dirname, 'media');
 const LOGS_DIR = path.join(__dirname, 'logs');
 const IS_DEV = process.argv.includes('--dev');
 
-// Hidden phone numbers (will not appear in chat list or messages)
-const HIDDEN_NUMBERS = [
-    '628113030640@c.us',  // +62 811-3030-640
+// Hidden chats (will not appear in chat list or messages)
+const HIDDEN_CHATS = [
+    '628113030640',           // +62 811-3030-640 (phone number)
+    '28037663957043@lid',     // +62 811-3030-640 (lid format)
 ];
 
 // Check if a chat ID should be hidden
 function isHiddenChat(chatId) {
     if (!chatId) return false;
-    return HIDDEN_NUMBERS.some(num => chatId.includes(num.replace('@c.us', '')));
+    return HIDDEN_CHATS.some(hidden => {
+        if (hidden.includes('@')) {
+            return chatId === hidden;
+        }
+        return chatId.includes(hidden);
+    });
 }
 
 // Message queue for handling concurrent sends
