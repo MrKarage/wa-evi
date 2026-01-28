@@ -906,13 +906,15 @@ app.post('/api/chats/:chatId/read', authMiddleware, async (req, res) => {
         db.updateChatUnreadCount(chatId, 0);
 
         // Optionally send seen to WhatsApp (mark messages as read on their end)
+        // Note: This may fail with force-ready state, but local read status still works
         if (isReady) {
             try {
                 const chat = await client.getChatById(chatId);
-                await chat.sendSeen();
+                if (chat && typeof chat.sendSeen === 'function') {
+                    await chat.sendSeen();
+                }
             } catch (e) {
-                // Ignore WhatsApp errors, local read status is still updated
-                console.log('Could not send seen to WhatsApp:', e.message);
+                // Silently ignore - expected with force-ready state
             }
         }
 
