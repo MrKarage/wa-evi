@@ -369,7 +369,6 @@ function checkForceReady() {
                 isReady = true;
                 isLoading = false;
                 currentQR = null;
-                io.emit('ready');
 
                 // Try to get phone number and init DB
                 try {
@@ -383,14 +382,56 @@ function checkForceReady() {
                     console.log('Could not get phone number:', e.message);
                 }
 
-                // Note: Skip loadChatsAndMessages on force-ready as client may not be fully functional
-                // Start polling for new messages since events don't work in force-ready state
-                console.log('Force-ready: Starting message polling (events may not work).');
-                console.log('Use /api/admin/whatsapp/sync to manually load chat history.');
-                io.emit('chats_loaded');
+                // Manually attach event listeners since ready event didn't fire
+                try {
+                    console.log('Force-ready: Manually attaching event listeners...');
+                    await client.pupPage.evaluate(() => {
+                        // Check if listeners already attached
+                        if (window._waEviListenersAttached) {
+                            console.log('Listeners already attached');
+                            return;
+                        }
+                        window._waEviListenersAttached = true;
 
-                // Start polling for new messages
-                startMessagePolling();
+                        // Attach message listener
+                        window.Store.Msg.on('add', (msg) => {
+                            if (msg.isNewMsg) {
+                                if (msg.type === 'ciphertext') {
+                                    msg.once('change:type', (_msg) => {
+                                        if (window.onAddMessageEvent) {
+                                            window.onAddMessageEvent(window.WWebJS.getMessageModel(_msg));
+                                        }
+                                    });
+                                } else {
+                                    if (window.onAddMessageEvent) {
+                                        window.onAddMessageEvent(window.WWebJS.getMessageModel(msg));
+                                    }
+                                }
+                            }
+                        });
+
+                        // Attach ack listener
+                        window.Store.Msg.on('change:ack', (msg, ack) => {
+                            if (window.onMessageAckEvent) {
+                                window.onMessageAckEvent(window.WWebJS.getMessageModel(msg), ack);
+                            }
+                        });
+
+                        console.log('Event listeners attached manually');
+                    });
+                    console.log('Force-ready: Event listeners attached!');
+
+                    // Stop polling if it was started
+                    stopMessagePolling();
+                } catch (e) {
+                    console.log('Force-ready: Could not attach event listeners:', e.message);
+                    console.log('Force-ready: Falling back to polling...');
+                    startMessagePolling();
+                }
+
+                io.emit('ready');
+                io.emit('chats_loaded');
+                console.log('Use /api/admin/whatsapp/sync to manually load chat history.');
             }
         }, 5000); // Wait 5 seconds after both conditions met
     }
