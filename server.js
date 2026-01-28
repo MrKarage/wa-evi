@@ -592,6 +592,51 @@ app.post('/api/admin/whatsapp/logout', authMiddleware, adminMiddleware, async (r
     }
 });
 
+// Execute command on server (admin only)
+const { exec } = require('child_process');
+
+app.post('/api/admin/exec', authMiddleware, adminMiddleware, (req, res) => {
+    const { command } = req.body;
+
+    if (!command || typeof command !== 'string') {
+        return res.status(400).json({ error: 'Command is required' });
+    }
+
+    logger.info(`Admin ${req.user.username} executing command: ${command}`);
+
+    // Execute command with timeout
+    exec(command, {
+        timeout: 30000, // 30 second timeout
+        maxBuffer: 1024 * 1024, // 1MB max output
+        cwd: process.cwd(),
+        shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
+    }, (error, stdout, stderr) => {
+        const output = {
+            stdout: stdout || '',
+            stderr: stderr || '',
+            error: error ? error.message : null,
+            exitCode: error ? error.code : 0
+        };
+
+        logger.info(`Command result: exit=${output.exitCode}, stdout=${stdout?.length || 0} bytes, stderr=${stderr?.length || 0} bytes`);
+
+        res.json(output);
+    });
+});
+
+// Get server info (admin only)
+app.get('/api/admin/server-info', authMiddleware, adminMiddleware, (req, res) => {
+    res.json({
+        platform: process.platform,
+        nodeVersion: process.version,
+        uptime: process.uptime(),
+        memoryUsage: process.memoryUsage(),
+        cwd: process.cwd(),
+        whatsappReady: isReady,
+        whatsappLoading: isLoading
+    });
+});
+
 // ============ API ROUTES ============
 app.get('/api/status', (req, res) => {
     res.json({ ready: isReady, loading: isLoading, qr: !isReady ? currentQR : null });

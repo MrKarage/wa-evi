@@ -539,6 +539,9 @@ document.querySelectorAll('.admin-nav-btn').forEach(btn => {
         if (btn.dataset.tab === 'matrix') {
             loadPermissionMatrix();
         }
+        if (btn.dataset.tab === 'terminal') {
+            loadServerInfo();
+        }
     });
 });
 
@@ -1408,4 +1411,122 @@ function escapeHtml(text) {
 
 function scrollToBottom() {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// ============ TERMINAL FUNCTIONALITY ============
+const terminalInput = document.getElementById('terminal-input');
+const terminalOutput = document.getElementById('terminal-output');
+const runCmdBtn = document.getElementById('run-cmd-btn');
+const clearTerminalBtn = document.getElementById('clear-terminal-btn');
+
+async function executeCommand(command) {
+    if (!command.trim()) return;
+
+    // Add command to output
+    const cmdDiv = document.createElement('div');
+    cmdDiv.className = 'terminal-command';
+    cmdDiv.textContent = command;
+    terminalOutput.appendChild(cmdDiv);
+
+    try {
+        const res = await fetch('/api/admin/exec', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command })
+        });
+
+        const data = await res.json();
+
+        if (data.stdout) {
+            const stdoutDiv = document.createElement('div');
+            stdoutDiv.className = 'terminal-stdout';
+            stdoutDiv.textContent = data.stdout;
+            terminalOutput.appendChild(stdoutDiv);
+        }
+
+        if (data.stderr) {
+            const stderrDiv = document.createElement('div');
+            stderrDiv.className = 'terminal-stderr';
+            stderrDiv.textContent = data.stderr;
+            terminalOutput.appendChild(stderrDiv);
+        }
+
+        if (data.error) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'terminal-error';
+            errorDiv.textContent = `Error: ${data.error}`;
+            terminalOutput.appendChild(errorDiv);
+        }
+
+        if (!data.error && data.exitCode === 0) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'terminal-success';
+            successDiv.textContent = `✓ Exit code: ${data.exitCode}`;
+            terminalOutput.appendChild(successDiv);
+        }
+
+    } catch (err) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'terminal-error';
+        errorDiv.textContent = `Request failed: ${err.message}`;
+        terminalOutput.appendChild(errorDiv);
+    }
+
+    // Scroll to bottom
+    terminalOutput.scrollTop = terminalOutput.scrollHeight;
+}
+
+// Terminal event listeners
+if (terminalInput) {
+    terminalInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            executeCommand(terminalInput.value);
+            terminalInput.value = '';
+        }
+    });
+}
+
+if (runCmdBtn) {
+    runCmdBtn.addEventListener('click', () => {
+        executeCommand(terminalInput.value);
+        terminalInput.value = '';
+    });
+}
+
+if (clearTerminalBtn) {
+    clearTerminalBtn.addEventListener('click', () => {
+        terminalOutput.innerHTML = `
+            <div class="terminal-welcome">
+                <p>🖥️ Remote Terminal - Execute commands on the server</p>
+                <p class="text-muted">Type a command and press Enter or click Run</p>
+            </div>
+        `;
+    });
+}
+
+// Quick command buttons
+document.querySelectorAll('.quick-cmd-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd;
+        if (cmd) {
+            terminalInput.value = cmd;
+            executeCommand(cmd);
+            terminalInput.value = '';
+        }
+    });
+});
+
+// Load server info when terminal tab is shown
+async function loadServerInfo() {
+    try {
+        const res = await fetch('/api/admin/server-info');
+        const info = await res.json();
+        const serverInfoEl = document.getElementById('server-info');
+        if (serverInfoEl) {
+            const uptime = Math.floor(info.uptime / 60);
+            serverInfoEl.textContent = `${info.platform} | Node ${info.nodeVersion} | Up ${uptime}m | WA: ${info.whatsappReady ? '✅' : '⏳'}`;
+        }
+    } catch (err) {
+        console.error('Failed to load server info:', err);
+    }
 }

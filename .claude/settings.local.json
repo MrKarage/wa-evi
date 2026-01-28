@@ -11,7 +11,14 @@
       "Bash(npm start)",
       "Bash(timeout:*)",
       "Bash(npx kill-port:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill /F /PID 6472)",
+      "Bash(powershell -Command \"Stop-Process -Id 6472 -Force\")",
+      "Bash(powershell -Command:*)",
+      "Bash(ping:*)",
+      "Bash(curl:*)"
     ]
   }
 }
