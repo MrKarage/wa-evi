@@ -469,9 +469,23 @@ client.on('change_battery', (info) => {
     }
 });
 
+// Debug: Log all raw events
+client.on('message', (message) => {
+    logger.whatsapp('EVENT:message', `from=${message.from} body=${message.body?.substring(0, 30) || '[media]'}`);
+});
+
+client.on('message_ack', (message, ack) => {
+    logger.whatsapp('EVENT:message_ack', `id=${message.id._serialized?.substring(0, 20)} ack=${ack}`);
+});
+
+client.on('message_reaction', (reaction) => {
+    logger.whatsapp('EVENT:message_reaction', `${reaction.reaction} on ${reaction.msgId?._serialized?.substring(0, 20)}`);
+});
+
 // Handle ALL messages (both sent and received) via message_create
 client.on('message_create', async (message) => {
     const direction = message.fromMe ? 'SENT' : 'RECEIVED';
+    logger.whatsapp('EVENT:message_create', `${direction} from=${message.from} to=${message.to} body=${message.body?.substring(0, 30) || '[media]'}`);
     console.log(`Message ${direction}: ${message.body?.substring(0, 50) || '[media]'}`);
 
     const savedMessage = await saveMessage(message);
