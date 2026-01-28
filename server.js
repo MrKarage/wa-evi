@@ -79,12 +79,20 @@ const client = new Client({
     }),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        timeout: 120000
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ],
+        timeout: 180000
     },
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/nicoh00/nicoh_whatsappstorage/master/md.json'
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
     }
 });
 
@@ -344,7 +352,24 @@ client.on('auth_failure', (msg) => {
 client.on('disconnected', (reason) => {
     logger.whatsapp('DISCONNECT', 'Client disconnected:', reason);
     isReady = false;
+    isLoading = false;
     io.emit('disconnected', reason);
+});
+
+// Debug: catch any client errors
+client.on('change_state', (state) => {
+    logger.whatsapp('STATE', `State changed to: ${state}`);
+});
+
+client.on('change_battery', (info) => {
+    logger.whatsapp('BATTERY', `Battery: ${info.battery}% plugged: ${info.plugged}`);
+    // If we get battery info, client should be ready
+    if (!isReady && info.battery !== undefined) {
+        logger.whatsapp('READY-FIX', 'Got battery event but not ready - forcing ready state');
+        isReady = true;
+        isLoading = false;
+        io.emit('ready');
+    }
 });
 
 // Handle ALL messages (both sent and received) via message_create
