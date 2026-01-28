@@ -100,10 +100,19 @@ socket.on('status', (data) => {
         const qrContainer = document.querySelector('.qr-container');
         if (qrContainer) {
             qrContainer.querySelector('.qr-instructions')?.classList.add('hidden');
-            qrCode.innerHTML = `
-                <p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>
-                ${currentUser?.is_admin ? '<button onclick="restartWhatsApp()" style="margin-top: 20px; padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Restart WhatsApp</button>' : ''}
-            `;
+            if (data.stuck && currentUser?.is_admin) {
+                showStuckButtons('Session stuck - try these options:');
+            } else {
+                qrCode.innerHTML = `
+                    <p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>
+                    ${currentUser?.is_admin ? `
+                        <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 20px;">
+                            <button onclick="restartWhatsApp()" style="padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer;">Restart</button>
+                            <button onclick="clearSession()" style="padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Clear Session</button>
+                        </div>
+                    ` : ''}
+                `;
+            }
         }
     } else if (data.qr && currentUser?.is_admin) {
         // No session - show QR for scanning
@@ -123,10 +132,7 @@ socket.on('status', (data) => {
 // Handle initialization timeout
 socket.on('init_timeout', (data) => {
     if (currentUser?.is_admin) {
-        qrCode.innerHTML = `
-            <p style="padding: 20px; color: #e74c3c;">${data.message}</p>
-            <button onclick="restartWhatsApp()" style="margin-top: 10px; padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Restart WhatsApp</button>
-        `;
+        showStuckButtons(data.message);
     }
 });
 
@@ -138,11 +144,39 @@ async function restartWhatsApp() {
         const res = await fetch('/api/admin/whatsapp/restart', { method: 'POST' });
         const data = await res.json();
         if (!data.success) {
-            qrCode.innerHTML = `<p style="padding: 20px; color: #e74c3c;">Error: ${data.error}</p>`;
+            showStuckButtons('Error: ' + data.error);
         }
     } catch (e) {
-        qrCode.innerHTML = `<p style="padding: 20px; color: #e74c3c;">Error: ${e.message}</p>`;
+        showStuckButtons('Error: ' + e.message);
     }
+}
+
+// Clear session and force new QR
+async function clearSession() {
+    if (!currentUser?.is_admin) return;
+    if (!confirm('This will clear the session and require a new QR scan. Continue?')) return;
+    qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Clearing session...</p>';
+    try {
+        const res = await fetch('/api/admin/whatsapp/clear-session', { method: 'POST' });
+        const data = await res.json();
+        if (!data.success) {
+            showStuckButtons('Error: ' + data.error);
+        }
+    } catch (e) {
+        showStuckButtons('Error: ' + e.message);
+    }
+}
+
+// Show stuck state with action buttons
+function showStuckButtons(message = 'Session stuck - try these options:') {
+    if (!currentUser?.is_admin) return;
+    qrCode.innerHTML = `
+        <p style="padding: 20px; color: #e74c3c;">${message}</p>
+        <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            <button onclick="restartWhatsApp()" style="padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer;">Restart</button>
+            <button onclick="clearSession()" style="padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Clear Session</button>
+        </div>
+    `;
 }
 
 socket.on('new_message', (message) => {

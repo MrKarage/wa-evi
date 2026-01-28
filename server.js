@@ -627,6 +627,41 @@ app.post('/api/admin/whatsapp/restart', authMiddleware, adminMiddleware, async (
     }
 });
 
+// Clear session and restart (forces new QR scan)
+app.post('/api/admin/whatsapp/clear-session', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        console.log('WhatsApp session clear requested by admin');
+        isReady = false;
+        isLoading = false;
+        currentQR = null;
+
+        // Try to destroy existing client
+        try {
+            await client.destroy();
+        } catch (e) {
+            console.log('Client destroy error (continuing):', e.message);
+        }
+
+        // Delete session folder
+        if (fs.existsSync(SESSION_DIR)) {
+            fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+            console.log('Session folder deleted:', SESSION_DIR);
+        }
+
+        // Reinitialize after short delay
+        setTimeout(() => {
+            console.log('Reinitializing WhatsApp client (fresh session)...');
+            isLoading = true;
+            client.initialize();
+        }, 2000);
+
+        res.json({ success: true, message: 'Session cleared, new QR code will appear shortly' });
+    } catch (err) {
+        console.error('WhatsApp clear session error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Execute command on server (admin only)
 const { exec } = require('child_process');
 
