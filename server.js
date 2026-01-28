@@ -16,6 +16,8 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const MEDIA_DIR = path.join(__dirname, 'media');
+const LOGS_DIR = path.join(__dirname, 'logs');
+const IS_DEV = process.argv.includes('--dev');
 
 // Message queue for handling concurrent sends
 const messageQueue = [];
@@ -680,6 +682,51 @@ app.get('/api/status', (req, res) => {
     });
 });
 
+// Dev-only log viewer endpoint
+app.get('/api/logs', (req, res) => {
+    if (!IS_DEV) {
+        return res.status(403).json({ error: 'Logs only available in dev mode' });
+    }
+
+    try {
+        const logFile = req.query.file || 'server';
+        const lines = parseInt(req.query.lines) || 100;
+        const date = req.query.date || new Date().toISOString().split('T')[0];
+
+        const filename = `${logFile}-${date}.log`;
+        const filepath = path.join(LOGS_DIR, filename);
+
+        if (!fs.existsSync(filepath)) {
+            return res.status(404).json({ error: `Log file not found: ${filename}` });
+        }
+
+        const content = fs.readFileSync(filepath, 'utf8');
+        const logLines = content.trim().split('\n');
+        const lastLines = logLines.slice(-lines);
+
+        res.type('text/plain').send(lastLines.join('\n'));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// List available log files (dev only)
+app.get('/api/logs/list', (req, res) => {
+    if (!IS_DEV) {
+        return res.status(403).json({ error: 'Logs only available in dev mode' });
+    }
+
+    try {
+        if (!fs.existsSync(LOGS_DIR)) {
+            return res.json([]);
+        }
+        const files = fs.readdirSync(LOGS_DIR).filter(f => f.endsWith('.log'));
+        res.json(files);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/chats', authMiddleware, (req, res) => {
     try {
         const chats = db.getUserChats(req.user.id, req.user.is_admin);
@@ -940,6 +987,10 @@ async function start() {
         console.log(`\n========================================`);
         console.log(`  WhatsApp Archive Dashboard`);
         console.log(`  Open: http://localhost:${PORT}`);
+        if (IS_DEV) {
+            console.log(`  Mode: DEVELOPMENT`);
+            console.log(`  Logs: http://localhost:${PORT}/api/logs`);
+        }
         console.log(`========================================\n`);
 
         // Initialize WhatsApp client
