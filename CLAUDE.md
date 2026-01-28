@@ -107,20 +107,6 @@ curl -X POST http://100.71.26.11:3000/api/admin/whatsapp/clear-session
 rm -rf .wwebjs_auth
 ```
 
-## Hidden Numbers
-
-Numbers in `HIDDEN_NUMBERS` array (server.js) are filtered from:
-- Chat list
-- Messages endpoint
-- Real-time events
-- Sync and polling
-
-```javascript
-const HIDDEN_NUMBERS = [
-    '628113030640@c.us',  // +62 811-3030-640
-];
-```
-
 ## Running the Server
 
 ```bash
