@@ -860,6 +860,7 @@ async function start() {
 
         // Initialize WhatsApp client
         console.log('Initializing WhatsApp client...');
+        isLoading = true; // Mark as loading before client.initialize() so frontend knows
         client.initialize();
     });
 }
