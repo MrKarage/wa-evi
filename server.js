@@ -282,9 +282,18 @@ let loadingComplete = false;
 let authComplete = false;
 let readyTimeout = null;
 
-async function loadChatsAndMessages() {
+async function loadChatsAndMessages(retryCount = 0) {
+    const maxRetries = 3;
+    const retryDelay = 5000; // 5 seconds between retries
+
     try {
-        const chats = await withRetry(() => client.getChats());
+        // Wait a bit for client to stabilize after force-ready
+        if (retryCount === 0) {
+            console.log('Waiting for client to stabilize...');
+            await new Promise(r => setTimeout(r, 3000));
+        }
+
+        const chats = await withRetry(() => client.getChats(), 3, 2000);
         console.log(`Loading ${Math.min(chats.length, 30)} chats...`);
 
         for (const chat of chats.slice(0, 30)) {
@@ -310,6 +319,14 @@ async function loadChatsAndMessages() {
         io.emit('chats_loaded');
     } catch (err) {
         console.error('Error loading chats:', err.message);
+
+        // Retry if client not ready yet
+        if (retryCount < maxRetries && isReady) {
+            console.log(`Retrying chat load in ${retryDelay/1000}s... (attempt ${retryCount + 1}/${maxRetries})`);
+            await new Promise(r => setTimeout(r, retryDelay));
+            return loadChatsAndMessages(retryCount + 1);
+        }
+
         io.emit('chats_loaded');
     }
 }
