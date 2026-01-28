@@ -19,6 +19,17 @@ const MEDIA_DIR = path.join(__dirname, 'media');
 const LOGS_DIR = path.join(__dirname, 'logs');
 const IS_DEV = process.argv.includes('--dev');
 
+// Hidden phone numbers (will not appear in chat list or messages)
+const HIDDEN_NUMBERS = [
+    '628113030640@c.us',  // +62 811-3030-640
+];
+
+// Check if a chat ID should be hidden
+function isHiddenChat(chatId) {
+    if (!chatId) return false;
+    return HIDDEN_NUMBERS.some(num => chatId.includes(num.replace('@c.us', '')));
+}
+
 // Message queue for handling concurrent sends
 const messageQueue = [];
 let isProcessingQueue = false;
@@ -314,6 +325,9 @@ async function loadChatsAndMessages(options = {}) {
             console.log(`Filtering to chats active in last ${lastHoursOnly} hour(s): ${filteredChats.length} chats`);
         }
 
+        // Filter out hidden numbers
+        filteredChats = filteredChats.filter(chat => !isHiddenChat(chat.id._serialized));
+
         const chatsToLoad = filteredChats.slice(0, maxChats);
         console.log(`Loading ${chatsToLoad.length} chats...`);
 
@@ -456,8 +470,10 @@ async function startMessagePolling() {
 
         try {
             const chats = await client.getChats();
+            // Filter out hidden numbers
+            const visibleChats = chats.filter(chat => !isHiddenChat(chat.id._serialized));
 
-            for (const chat of chats.slice(0, 10)) { // Check top 10 chats
+            for (const chat of visibleChats.slice(0, 10)) { // Check top 10 chats
                 try {
                     const messages = await chat.fetchMessages({ limit: 5 });
 
@@ -583,6 +599,11 @@ client.on('message_reaction', (reaction) => {
 
 // Handle ALL messages (both sent and received) via message_create
 client.on('message_create', async (message) => {
+    // Skip hidden numbers
+    if (isHiddenChat(message.from) || isHiddenChat(message.to)) {
+        return;
+    }
+
     const direction = message.fromMe ? 'SENT' : 'RECEIVED';
     logger.whatsapp('EVENT:message_create', `${direction} from=${message.from} to=${message.to} body=${message.body?.substring(0, 30) || '[media]'}`);
     console.log(`Message ${direction}: ${message.body?.substring(0, 50) || '[media]'}`);
@@ -1044,7 +1065,9 @@ app.get('/api/logs/list', (req, res) => {
 app.get('/api/chats', authMiddleware, (req, res) => {
     try {
         const chats = db.getUserChats(req.user.id, req.user.is_admin);
-        res.json(chats);
+        // Filter out hidden numbers
+        const filteredChats = chats.filter(chat => !isHiddenChat(chat.id));
+        res.json(filteredChats);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1052,6 +1075,10 @@ app.get('/api/chats', authMiddleware, (req, res) => {
 
 app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     try {
+        // Block access to hidden chats
+        if (isHiddenChat(req.params.chatId)) {
+            return res.status(404).json({ error: 'Chat not found' });
+        }
         const messages = db.getMessages(req.params.chatId);
         res.json(messages);
     } catch (err) {
