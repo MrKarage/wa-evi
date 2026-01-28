@@ -798,18 +798,24 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
     console.log(`User ${socket.user.username} connected`);
+    console.log(`  -> DEBUG: isReady=${isReady}, isLoading=${isLoading}, hasQR=${!!currentQR}`);
 
     // Join user-specific room
     socket.join(`user_${socket.user.id}`);
 
     // Send current status - include loading state so frontend knows if session is being restored
+    console.log(`  -> Emitting status: ready=${isReady}, loading=${isLoading}`);
     socket.emit('status', { ready: isReady, loading: isLoading, user: socket.user });
 
     // If already ready, emit ready event so frontend switches to dashboard
     if (isReady) {
+        console.log(`  -> Emitting 'ready' event`);
         socket.emit('ready');
     } else if (currentQR && socket.user.is_admin) {
+        console.log(`  -> Emitting 'qr' event`);
         socket.emit('qr', currentQR);
+    } else {
+        console.log(`  -> Not ready yet, no QR to show`);
     }
 
     // Handle typing events from client
