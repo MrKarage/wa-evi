@@ -88,6 +88,7 @@ const client = new Client({
 let isReady = false;
 let currentQR = null;
 let clientInitializing = false;
+let isLoading = false; // Track if WhatsApp is loading from saved session
 
 // Retry wrapper for puppeteer operations (handles detached frame errors)
 async function withRetry(operation, maxRetries = 2, delay = 500) {
@@ -264,12 +265,14 @@ client.on('qr', async (qr) => {
 // Handle loading screen (WhatsApp is loading)
 client.on('loading_screen', (percent, message) => {
     console.log(`WhatsApp loading: ${percent}% - ${message}`);
+    isLoading = true; // Mark that we're loading (means session exists)
     io.emit('loading', { percent, message });
 });
 
 client.on('ready', async () => {
     console.log('WhatsApp client is ready!');
     isReady = true;
+    isLoading = false;
     currentQR = null;
     io.emit('ready');
 
@@ -799,9 +802,13 @@ io.on('connection', (socket) => {
     // Join user-specific room
     socket.join(`user_${socket.user.id}`);
 
-    // Send current status
-    socket.emit('status', { ready: isReady, user: socket.user });
-    if (!isReady && currentQR && socket.user.is_admin) {
+    // Send current status - include loading state so frontend knows if session is being restored
+    socket.emit('status', { ready: isReady, loading: isLoading, user: socket.user });
+
+    // If already ready, emit ready event so frontend switches to dashboard
+    if (isReady) {
+        socket.emit('ready');
+    } else if (currentQR && socket.user.is_admin) {
         socket.emit('qr', currentQR);
     }
 

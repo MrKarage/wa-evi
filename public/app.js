@@ -65,12 +65,21 @@ socket.on('qr', (qr) => {
     }
 });
 
-// Handle WhatsApp loading progress
+// Handle WhatsApp loading progress (session being restored)
 socket.on('loading', (data) => {
-    const loadingText = qrScreen.querySelector('.qr-loading p');
-    if (loadingText) {
-        loadingText.textContent = `WhatsApp loading: ${data.percent}%`;
+    // Hide QR and show loading instead - session exists
+    const qrLoading = qrScreen.querySelector('.qr-loading');
+    const qrContainer = document.querySelector('.qr-container');
+    if (qrLoading) {
+        qrLoading.querySelector('p').textContent = `WhatsApp loading: ${data.percent}%`;
     }
+    // Hide QR code since session is being restored from disk
+    if (qrContainer) {
+        qrContainer.querySelector('.qr-instructions')?.classList.add('hidden');
+        qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>';
+    }
+    qrScreen.classList.remove('hidden');
+    dashboard.classList.add('hidden');
 });
 
 socket.on('ready', () => {
@@ -84,9 +93,20 @@ socket.on('status', (data) => {
         qrScreen.classList.add('hidden');
         dashboard.classList.remove('hidden');
         loadChats();
+    } else if (data.loading) {
+        // Session is being restored - show loading state, not QR
+        qrScreen.classList.remove('hidden');
+        dashboard.classList.add('hidden');
+        const qrContainer = document.querySelector('.qr-container');
+        if (qrContainer) {
+            qrContainer.querySelector('.qr-instructions')?.classList.add('hidden');
+            qrCode.innerHTML = '<p style="padding: 40px; color: var(--text-secondary);">Session restoring... Please wait</p>';
+        }
     } else if (data.qr && currentUser?.is_admin) {
-        // Show QR if available
+        // No session - show QR for scanning
         qrCode.innerHTML = `<img src="${data.qr}" alt="QR Code">`;
+        const qrInstructions = document.querySelector('.qr-instructions');
+        if (qrInstructions) qrInstructions.classList.remove('hidden');
         qrScreen.classList.remove('hidden');
     } else if (!currentUser?.is_admin) {
         // Non-admin waiting
