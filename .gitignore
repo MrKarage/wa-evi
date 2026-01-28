@@ -8,3 +8,4 @@ logs/
 .env
 tmpclaude-*
 nul
+cookies.txt
