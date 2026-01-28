@@ -879,21 +879,15 @@ app.post('/api/admin/whatsapp/clear-session', authMiddleware, adminMiddleware, a
 // Execute command on server (admin only)
 const { exec } = require('child_process');
 
-app.post('/api/admin/exec', authMiddleware, adminMiddleware, (req, res) => {
-    const { command } = req.body;
+function executeCommand(command, res, username) {
+    logger.info(`Admin ${username} executing command: ${command}`);
 
-    if (!command || typeof command !== 'string') {
-        return res.status(400).json({ error: 'Command is required' });
-    }
-
-    logger.info(`Admin ${req.user.username} executing command: ${command}`);
-
-    // Execute command with timeout
+    // Use cmd.exe on Windows to avoid PowerShell script restrictions
     exec(command, {
-        timeout: 30000, // 30 second timeout
-        maxBuffer: 1024 * 1024, // 1MB max output
+        timeout: 30000,
+        maxBuffer: 1024 * 1024 * 5, // 5MB max output
         cwd: process.cwd(),
-        shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
+        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash'
     }, (error, stdout, stderr) => {
         const output = {
             stdout: stdout || '',
@@ -906,6 +900,36 @@ app.post('/api/admin/exec', authMiddleware, adminMiddleware, (req, res) => {
 
         res.json(output);
     });
+}
+
+// POST /api/admin/exec - JSON body with command
+app.post('/api/admin/exec', authMiddleware, adminMiddleware, (req, res) => {
+    const { command } = req.body;
+
+    if (!command || typeof command !== 'string') {
+        return res.status(400).json({ error: 'Command is required' });
+    }
+
+    executeCommand(command, res, req.user.username);
+});
+
+// GET /api/admin/exec?cmd=... - easier to use from curl
+app.get('/api/admin/exec', authMiddleware, adminMiddleware, (req, res) => {
+    const command = req.query.cmd;
+
+    if (!command || typeof command !== 'string') {
+        return res.status(400).json({
+            error: 'Command is required',
+            usage: '/api/admin/exec?cmd=your_command_here',
+            examples: [
+                '/api/admin/exec?cmd=dir',
+                '/api/admin/exec?cmd=type package.json',
+                '/api/admin/exec?cmd=node -v'
+            ]
+        });
+    }
+
+    executeCommand(command, res, req.user.username);
 });
 
 // Get server info (admin only)
