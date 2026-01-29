@@ -31,6 +31,14 @@ const closeAdminBtn = document.getElementById('close-admin-btn');
 const messageInputContainer = document.getElementById('message-input-container');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
+const editNameBtn = document.getElementById('edit-name-btn');
+const editContactModal = document.getElementById('edit-contact-modal');
+const editContactNameInput = document.getElementById('edit-contact-name');
+const editContactOriginalName = document.getElementById('edit-contact-original-name');
+const editContactChatId = document.getElementById('edit-contact-chat-id');
+const saveContactNameBtn = document.getElementById('save-contact-name');
+const resetContactNameBtn = document.getElementById('reset-contact-name');
+const closeEditContactBtn = document.getElementById('close-edit-contact');
 
 // Check authentication on load
 async function checkAuth() {
@@ -373,7 +381,7 @@ async function selectChat(chat) {
     document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
     document.querySelector(`[data-chat-id="${chat.id}"]`)?.classList.add('active');
 
-    chatName.textContent = chat.name || 'Unknown';
+    chatName.textContent = chat.custom_name || chat.name || 'Unknown';
     chatStatus.textContent = `${chat.message_count || 0} messages`;
 
     noChatSelected.classList.add('hidden');
@@ -1592,3 +1600,120 @@ async function loadServerInfo() {
         console.error('Failed to load server info:', err);
     }
 }
+
+// ============ EDIT CONTACT NAME ============
+let currentEditChat = null;
+
+// Open edit contact modal
+editNameBtn?.addEventListener('click', () => {
+    if (!currentChatId) return;
+
+    // Find current chat
+    currentEditChat = chats.find(c => c.id === currentChatId);
+    if (!currentEditChat) return;
+
+    // Populate modal - use custom_name if set, otherwise leave empty for user to enter
+    editContactNameInput.value = currentEditChat.custom_name || '';
+    editContactOriginalName.textContent = currentEditChat.original_name || currentEditChat.name || 'Unknown';
+    editContactChatId.textContent = currentEditChat.id;
+
+    // Show modal
+    editContactModal.classList.remove('hidden');
+    editContactNameInput.focus();
+    editContactNameInput.select();
+});
+
+// Close edit contact modal
+function closeEditContactModal() {
+    editContactModal.classList.add('hidden');
+    currentEditChat = null;
+}
+
+closeEditContactBtn?.addEventListener('click', closeEditContactModal);
+
+editContactModal?.addEventListener('click', (e) => {
+    if (e.target === editContactModal) {
+        closeEditContactModal();
+    }
+});
+
+// Save contact name
+saveContactNameBtn?.addEventListener('click', async () => {
+    if (!currentEditChat || !currentChatId) return;
+
+    const newName = editContactNameInput.value.trim();
+
+    try {
+        saveContactNameBtn.disabled = true;
+        saveContactNameBtn.textContent = 'Saving...';
+
+        const res = await fetch(`/api/chats/${encodeURIComponent(currentChatId)}/name`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName || null })
+        });
+
+        if (res.ok) {
+            // Update local state
+            currentEditChat.custom_name = newName || null;
+            const displayName = newName || currentEditChat.original_name || currentEditChat.name || 'Unknown';
+
+            // Update chat name in header
+            chatName.textContent = displayName;
+
+            // Update chat list
+            const chatItem = document.querySelector(`[data-chat-id="${currentChatId}"] .chat-item-name`);
+            if (chatItem) {
+                chatItem.textContent = displayName;
+            }
+
+            closeEditContactModal();
+        } else {
+            const data = await res.json();
+            alert('Failed to save: ' + (data.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('Failed to save: ' + err.message);
+    } finally {
+        saveContactNameBtn.disabled = false;
+        saveContactNameBtn.textContent = 'Save';
+    }
+});
+
+// Reset contact name to original
+resetContactNameBtn?.addEventListener('click', () => {
+    if (!currentEditChat) return;
+    editContactNameInput.value = '';
+});
+
+// Handle Enter key in edit contact input
+editContactNameInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        saveContactNameBtn?.click();
+    }
+    if (e.key === 'Escape') {
+        closeEditContactModal();
+    }
+});
+
+// Listen for chat rename events from server
+socket.on('chat_renamed', (data) => {
+    const chat = chats.find(c => c.id === data.chatId);
+    if (chat) {
+        chat.custom_name = data.name;
+        // Update the display name field as well
+        const displayName = data.name || chat.original_name || chat.name || 'Unknown';
+
+        // Update UI if this is the current chat
+        if (currentChatId === data.chatId) {
+            chatName.textContent = displayName;
+        }
+
+        // Update chat list
+        const chatItem = document.querySelector(`[data-chat-id="${data.chatId}"] .chat-item-name`);
+        if (chatItem) {
+            chatItem.textContent = displayName;
+        }
+    }
+});

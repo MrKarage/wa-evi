@@ -343,6 +343,7 @@ function getChats() {
     const results = db.exec(`
         SELECT c.id, COALESCE(c.custom_name, c.name) as name, c.is_group, c.profile_pic,
                c.last_message_time, c.unread_count, c.created_at, c.custom_name,
+               c.name as original_name,
                (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count,
                (SELECT body FROM messages m WHERE m.chat_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
         FROM chats c
@@ -588,7 +589,7 @@ function getUserChats(userId, isAdmin) {
     const stmt = db.prepare(`
         SELECT c.id, COALESCE(c.custom_name, c.name) as name, c.is_group, c.profile_pic,
                c.last_message_time, c.unread_count, c.created_at, c.custom_name,
-               p.can_read, p.can_send,
+               c.name as original_name, p.can_read, p.can_send,
                (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count,
                (SELECT body FROM messages m WHERE m.chat_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
         FROM chats c
