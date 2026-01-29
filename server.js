@@ -1152,6 +1152,47 @@ app.post('/api/chats/:chatId/read', authMiddleware, async (req, res) => {
     }
 });
 
+// Set custom display name for a chat
+app.post('/api/chats/:chatId/name', authMiddleware, adminMiddleware, (req, res) => {
+    const chatId = decodeURIComponent(req.params.chatId);
+    const { name } = req.body;
+
+    try {
+        if (isHiddenChat(chatId)) {
+            return res.status(404).json({ error: 'Chat not found' });
+        }
+
+        db.setChatCustomName(chatId, name || null); // null to clear custom name
+
+        // Notify all clients about the name change
+        io.emit('chat_renamed', { chatId, name: name || null });
+
+        res.json({ success: true, chatId, customName: name || null });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get chat details by ID
+app.get('/api/chats/:chatId', authMiddleware, (req, res) => {
+    const chatId = decodeURIComponent(req.params.chatId);
+
+    try {
+        if (isHiddenChat(chatId)) {
+            return res.status(404).json({ error: 'Chat not found' });
+        }
+
+        const chat = db.getChatById(chatId);
+        if (!chat) {
+            return res.status(404).json({ error: 'Chat not found' });
+        }
+
+        res.json(chat);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/deleted', authMiddleware, (req, res) => {
     try {
         const messages = db.getDeletedMessages();

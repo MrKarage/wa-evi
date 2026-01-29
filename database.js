@@ -60,6 +60,11 @@ async function initDatabase(phoneNumber = null) {
         db.run(`ALTER TABLE chats ADD COLUMN unread_count INTEGER DEFAULT 0`);
     } catch (e) { }
 
+    // Migration: Add custom_name column for user-defined display names
+    try {
+        db.run(`ALTER TABLE chats ADD COLUMN custom_name TEXT`);
+    } catch (e) { }
+
     db.run(`
         CREATE TABLE IF NOT EXISTS contacts (
             id TEXT PRIMARY KEY,
@@ -266,6 +271,33 @@ function updateChatUnreadCount(chatId, unreadCount) {
     saveDatabase();
 }
 
+// Set custom display name for a chat (user-defined name override)
+function setChatCustomName(chatId, customName) {
+    if (!db) return;
+    const stmt = db.prepare(`UPDATE chats SET custom_name = ? WHERE id = ?`);
+    stmt.run([customName || null, chatId]); // null to clear custom name
+    stmt.free();
+    saveDatabase();
+}
+
+// Get chat by ID
+function getChatById(chatId) {
+    if (!db) return null;
+    const stmt = db.prepare(`
+        SELECT id, COALESCE(custom_name, name) as name, name as original_name, custom_name,
+               is_group, profile_pic, last_message_time, unread_count
+        FROM chats WHERE id = ?
+    `);
+    stmt.bind([chatId]);
+    if (stmt.step()) {
+        const result = stmt.getAsObject();
+        stmt.free();
+        return result;
+    }
+    stmt.free();
+    return null;
+}
+
 function insertContact(id, number, name, pushname, profilePic, isBusiness) {
     if (!db) return;
     const stmt = db.prepare(`
@@ -309,7 +341,8 @@ function markMessageDeleted(id, deletedAt) {
 function getChats() {
     if (!db) return [];
     const results = db.exec(`
-        SELECT c.*,
+        SELECT c.id, COALESCE(c.custom_name, c.name) as name, c.is_group, c.profile_pic,
+               c.last_message_time, c.unread_count, c.created_at, c.custom_name,
                (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count,
                (SELECT body FROM messages m WHERE m.chat_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
         FROM chats c
@@ -553,7 +586,9 @@ function getUserChats(userId, isAdmin) {
         return getChats(); // Admin sees all chats
     }
     const stmt = db.prepare(`
-        SELECT c.*, p.can_read, p.can_send,
+        SELECT c.id, COALESCE(c.custom_name, c.name) as name, c.is_group, c.profile_pic,
+               c.last_message_time, c.unread_count, c.created_at, c.custom_name,
+               p.can_read, p.can_send,
                (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count,
                (SELECT body FROM messages m WHERE m.chat_id = c.id ORDER BY timestamp DESC LIMIT 1) as last_message
         FROM chats c
@@ -839,6 +874,8 @@ module.exports = {
     markMessageDeleted,
     markMessageEdited,
     getChats,
+    getChatById,
+    setChatCustomName,
     getMessages,
     getDeletedMessages,
     getEditedMessages,

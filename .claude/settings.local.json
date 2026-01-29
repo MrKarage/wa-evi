@@ -26,7 +26,8 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:docs.wwebjs.dev)",
-      "WebFetch(domain:100.71.26.11)"
+      "WebFetch(domain:100.71.26.11)",
+      "Bash(ssh:*)"
     ]
   }
 }
