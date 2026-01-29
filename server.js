@@ -171,14 +171,22 @@ async function saveChat(chat, unreadCount = null) {
         let profilePic = null;
         let chatName = chat.name || chat.id.user;
 
-        // For non-group chats, try to get contact's pushname if chat.name is just a phone number
+        // For non-group chats, try multiple sources for contact name
         if (!chat.isGroup && chatName.match(/^\+?\d[\d\s-]+$/)) {
             try {
                 const contact = await chat.getContact();
                 if (contact) {
-                    // Use pushname if available, otherwise keep the phone number
-                    chatName = contact.pushname || contact.name || chatName;
-                    profilePic = await contact.getProfilePicUrl();
+                    // Enhanced fallback chain for contact names
+                    // Priority: saved name > pushname > verified business name > phone number
+                    chatName = contact.name ||           // Saved in WhatsApp
+                               contact.pushname ||       // Profile name they set
+                               contact.verifiedName ||   // Business verified name
+                               contact.shortName ||      // Short version
+                               chatName;                 // Keep phone number as last resort
+
+                    try {
+                        profilePic = await contact.getProfilePicUrl();
+                    } catch (e) { }
                 }
             } catch (e) { }
         } else {
@@ -238,14 +246,22 @@ async function saveMessage(message) {
             senderName = 'Me';
         } else {
             // For received messages, get contact info
+            // Also try notifyName from message data as fallback
+            const notifyName = message._data?.notifyName || message.notifyName;
             try {
                 const contact = await withRetry(() => message.getContact());
                 senderId = contact.id._serialized;
-                senderName = contact.pushname || contact.name || contact.number || 'Unknown';
+                // Enhanced fallback chain for sender name
+                senderName = contact.name ||           // Saved in WhatsApp
+                             contact.pushname ||       // Profile name
+                             contact.verifiedName ||   // Business name
+                             notifyName ||             // From message data
+                             contact.number ||
+                             'Unknown';
                 await saveContact(contact);
             } catch (e) {
                 senderId = message.from || 'unknown';
-                senderName = 'Unknown';
+                senderName = notifyName || 'Unknown';
             }
         }
 
