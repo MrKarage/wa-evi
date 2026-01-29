@@ -98,28 +98,93 @@ curl -s -b cookies.txt "http://100.71.26.11:3000/api/admin/exec?cmd=npm%20run%20
 - `GET /api/admin/exec?cmd=...` - Execute command on server
 - `GET /api/logs` - View logs (dev mode only)
 
-## Common Issues & Fixes
+## whatsapp-web.js Known Issues & Fixes
 
-### 1. Ready event never fires
-**Symptom**: Auth successful, loading 100%, but no ready event
-**Cause**: whatsapp-web.js ready event sometimes doesn't fire
-**Fix**: Force-ready mechanism in server.js triggers after 5 seconds of auth+loading complete
+### Issue 1: Ready event never fires
+**Symptom**: Auth successful, loading reaches 100%, but `ready` event never fires
+**Cause**: whatsapp-web.js v1.26.0 has a bug where `ready` event sometimes doesn't fire
+**Location**: `node_modules/whatsapp-web.js/src/Client.js` line ~267
 
-### 2. Events not firing (message_create)
-**Symptom**: Messages not being captured in real-time
-**Cause**: `attachEventListeners()` only called on real ready event, not force-ready
-**Fix**: Manual event listener injection via `pupPage.evaluate()` after force-ready
+**Fix implemented in server.js**:
+```javascript
+// Force-ready mechanism triggers after 5 seconds of auth+loading complete
+function checkForceReady() {
+    if (loadingComplete && authComplete && !isReady) {
+        readyTimeout = setTimeout(async () => {
+            if (!isReady && loadingComplete && authComplete) {
+                isReady = true;
+                // Manually attach event listeners...
+            }
+        }, 5000);
+    }
+}
+```
 
-### 3. GetChats error - GroupMetadata.update undefined
+### Issue 2: Events not firing after force-ready (message_create)
+**Symptom**: Messages not captured in real-time after force-ready
+**Cause**: `attachEventListeners()` in Client.js line ~267 only runs on real `ready` event
+**Root cause**: `window.Store.Msg.on('add', ...)` never attached in force-ready mode
+
+**Fix**: Manually inject event listeners via `pupPage.evaluate()` after force-ready:
+```javascript
+await client.pupPage.evaluate(() => {
+    window.Store.Msg.on('add', (msg) => {
+        if (msg.isNewMsg) {
+            if (msg.type === 'ciphertext') {
+                msg.once('change:type', (_msg) => {
+                    if (window.onAddMessageEvent) {
+                        window.onAddMessageEvent(window.WWebJS.getMessageModel(_msg));
+                    }
+                });
+            } else {
+                if (window.onAddMessageEvent) {
+                    window.onAddMessageEvent(window.WWebJS.getMessageModel(msg));
+                }
+            }
+        }
+    });
+});
+```
+
+### Issue 3: GetChats error - GroupMetadata.update undefined
 **Symptom**: `Cannot read properties of undefined (reading 'update')`
-**Cause**: whatsapp-web.js uses deprecated API
-**Fix**: `scripts/patch-whatsapp.js` comments out the problematic line
+**Location**: `node_modules/whatsapp-web.js/src/util/Injected/Utils.js`
+**Cause**: `window.Store.GroupMetadata.update(chatWid)` is deprecated/undefined
 
-### 4. Stuck loading state
-**Symptom**: Status shows loading=true but nothing happens
-**Fix**: Use restart endpoint or clear-session endpoint
+**Fix**: `scripts/patch-whatsapp.js` comments out the problematic line:
+```javascript
+// Find and comment out this line in Utils.js:
+// await window.Store.GroupMetadata.update(chatWid);
+```
 
-### 5. Session corrupted
+**Auto-patch**: Runs on `npm install` via postinstall script
+
+### Issue 4: sendSeen error - markedUnread undefined
+**Symptom**: `Cannot read properties of undefined (reading 'markedUnread')`
+**Cause**: Some chats use `@lid` format instead of `@c.us`, causing sendSeen to fail
+
+**Fix**: Wrap sendSeen in try-catch (non-critical - local read status still works)
+```javascript
+try {
+    await chat.sendSeen();
+} catch (e) {
+    // Silently ignore - expected with @lid chats
+}
+```
+
+### Issue 5: Stuck loading state
+**Symptom**: Status shows `loading=true` but nothing happens
+**Fix**:
+```bash
+# Restart via API
+curl -X POST -b cookies.txt http://100.71.26.11:3000/api/admin/whatsapp/restart
+
+# Or clear session for fresh QR
+curl -X POST -b cookies.txt http://100.71.26.11:3000/api/admin/whatsapp/clear-session
+```
+
+### Issue 6: Session corrupted
+**Symptom**: WhatsApp won't connect, errors on startup
 **Fix**:
 ```bash
 # Via API
@@ -127,6 +192,21 @@ curl -X POST http://100.71.26.11:3000/api/admin/whatsapp/clear-session
 
 # Or manually delete
 rm -rf .wwebjs_auth
+```
+
+## Chat ID Formats
+
+WhatsApp uses different ID formats:
+- **Phone number**: `628123456789@c.us` (standard format)
+- **LID format**: `28037663957043@lid` (newer format, same phone can have different lid)
+- **Group**: `120363403839445272@g.us`
+
+**Important**: When filtering chats by phone number, check BOTH formats:
+```javascript
+const HIDDEN_CHATS = [
+    '628113030640',           // Phone number (partial match)
+    '28037663957043@lid',     // LID format (exact match)
+];
 ```
 
 ## Running the Server
@@ -146,14 +226,40 @@ npm run dev
 3. **Check WhatsApp state**: Look for `isReady`, `isLoading`, `currentQR` in status
 4. **Force sync**: `curl -X POST -b cookies.txt http://100.71.26.11:3000/api/admin/whatsapp/sync`
 
+## SSH Access
+
+```bash
+# SSH to remote server (key-based auth)
+ssh BJM@100.71.26.11
+
+# Run commands directly
+ssh BJM@100.71.26.11 "cd C:/Users/BJM/wa-evi && git pull"
+ssh BJM@100.71.26.11 "pm2 restart wa-evi"
+ssh BJM@100.71.26.11 "pm2 logs wa-evi --lines 50"
+```
+
+## PM2 Commands
+
+```bash
+# On remote server
+pm2 start server.js --name wa-evi   # Start
+pm2 restart wa-evi                   # Restart
+pm2 stop wa-evi                      # Stop
+pm2 logs wa-evi --lines 100          # View logs
+pm2 list                             # List processes
+pm2 monit                            # Monitor
+pm2 startup                          # Auto-start on boot
+pm2 save                             # Save process list
+```
+
 ## Git Workflow
 
 ```bash
 # On local machine
 git add . && git commit -m "message" && git push
 
-# On remote server (via exec endpoint or SSH)
-cd C:\Users\BJM\wa-evi && git pull && npm run dev
+# On remote server (via SSH)
+ssh BJM@100.71.26.11 "cd C:/Users/BJM/wa-evi && git pull && pm2 restart wa-evi"
 ```
 
 ## Timestamps
