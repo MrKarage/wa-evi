@@ -304,22 +304,27 @@ function fixChatNamesFromMessages() {
         if (!chatName || !phonePattern.test(chatName)) continue;
 
         // Find a sender name from messages in this chat that isn't a phone number
+        // Order by timestamp DESC to prefer more recent names (contact names are often updated)
         const msgResult = db.exec(`
-            SELECT DISTINCT sender_name FROM messages
+            SELECT sender_name FROM messages
             WHERE chat_id = '${chatId.replace(/'/g, "''")}'
             AND is_from_me = 0
             AND sender_name IS NOT NULL
             AND sender_name != 'Unknown'
-            LIMIT 1
+            ORDER BY timestamp DESC
+            LIMIT 10
         `);
 
         if (msgResult.length > 0 && msgResult[0].values.length > 0) {
-            const senderName = msgResult[0].values[0][0];
-            if (senderName && !phonePattern.test(senderName)) {
-                const stmt = db.prepare(`UPDATE chats SET name = ? WHERE id = ?`);
-                stmt.run([senderName, chatId]);
-                stmt.free();
-                updated++;
+            // Find the first sender name that isn't a phone number
+            for (const [senderName] of msgResult[0].values) {
+                if (senderName && !phonePattern.test(senderName)) {
+                    const stmt = db.prepare(`UPDATE chats SET name = ? WHERE id = ?`);
+                    stmt.run([senderName, chatId]);
+                    stmt.free();
+                    updated++;
+                    break;
+                }
             }
         }
     }
