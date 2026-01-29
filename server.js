@@ -169,16 +169,30 @@ async function saveMedia(message) {
 async function saveChat(chat, unreadCount = null) {
     try {
         let profilePic = null;
-        try {
-            profilePic = await chat.getContact().then(c => c.getProfilePicUrl());
-        } catch (e) { }
+        let chatName = chat.name || chat.id.user;
+
+        // For non-group chats, try to get contact's pushname if chat.name is just a phone number
+        if (!chat.isGroup && chatName.match(/^\+?\d[\d\s-]+$/)) {
+            try {
+                const contact = await chat.getContact();
+                if (contact) {
+                    // Use pushname if available, otherwise keep the phone number
+                    chatName = contact.pushname || contact.name || chatName;
+                    profilePic = await contact.getProfilePicUrl();
+                }
+            } catch (e) { }
+        } else {
+            try {
+                profilePic = await chat.getContact().then(c => c.getProfilePicUrl());
+            } catch (e) { }
+        }
 
         // Use provided unreadCount or get from chat object
         const unread = unreadCount !== null ? unreadCount : (chat.unreadCount || 0);
 
         db.insertChat(
             chat.id._serialized,
-            chat.name || chat.id.user,
+            chatName,
             chat.isGroup,
             profilePic,
             Date.now(),
