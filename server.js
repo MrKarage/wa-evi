@@ -263,6 +263,11 @@ async function saveMessage(message) {
                 senderId = message.from || 'unknown';
                 senderName = notifyName || 'Unknown';
             }
+
+            // Update chat name if we have a better name from the message sender
+            if (senderName && senderName !== 'Unknown' && !chat.isGroup) {
+                db.updateChatNameIfBetter(chat.id._serialized, senderName);
+            }
         }
 
         await saveChat(chat);
@@ -892,6 +897,18 @@ app.post('/api/admin/whatsapp/sync', authMiddleware, adminMiddleware, async (req
         await loadChatsAndMessages({ lastHoursOnly: hours, maxChats, maxMessages });
     } catch (err) {
         console.error('Sync error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fix chat names from message sender names
+app.post('/api/admin/fix-chat-names', authMiddleware, adminMiddleware, (req, res) => {
+    try {
+        const result = db.fixChatNamesFromMessages();
+        console.log(`Fixed chat names: ${result.updated} of ${result.total} chats updated`);
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.error('Fix chat names error:', err);
         res.status(500).json({ error: err.message });
     }
 });

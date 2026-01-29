@@ -241,25 +241,94 @@ function sanitize(val) {
 function insertChat(id, name, isGroup, profilePic, lastMessageTime, unreadCount = null) {
     if (!db) return;
 
-    // If unreadCount is null, preserve existing value or default to 0
+    // Check for existing chat to preserve custom_name and unread_count
     let finalUnreadCount = 0;
-    if (unreadCount === null) {
-        // Check existing value
-        const existing = db.exec(`SELECT unread_count FROM chats WHERE id = '${id.replace(/'/g, "''")}'`);
-        if (existing.length > 0 && existing[0].values.length > 0) {
+    let existingCustomName = null;
+    const existing = db.exec(`SELECT unread_count, custom_name FROM chats WHERE id = '${id.replace(/'/g, "''")}'`);
+    if (existing.length > 0 && existing[0].values.length > 0) {
+        if (unreadCount === null) {
             finalUnreadCount = existing[0].values[0][0] || 0;
+        } else {
+            finalUnreadCount = unreadCount;
         }
-    } else {
+        existingCustomName = existing[0].values[0][1] || null;
+    } else if (unreadCount !== null) {
         finalUnreadCount = unreadCount;
     }
 
     const stmt = db.prepare(`
-        INSERT OR REPLACE INTO chats (id, name, is_group, profile_pic, last_message_time, unread_count, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO chats (id, name, is_group, profile_pic, last_message_time, unread_count, created_at, custom_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run([sanitize(id), sanitize(name), isGroup ? 1 : 0, sanitize(profilePic), sanitize(lastMessageTime), sanitize(finalUnreadCount), Date.now()]);
+    stmt.run([sanitize(id), sanitize(name), isGroup ? 1 : 0, sanitize(profilePic), sanitize(lastMessageTime), sanitize(finalUnreadCount), Date.now(), existingCustomName]);
     stmt.free();
     saveDatabase();
+}
+
+// Update chat name if current name looks like a phone number and we have a better name
+function updateChatNameIfBetter(chatId, newName) {
+    if (!db || !newName || !chatId) return false;
+
+    // Check current name
+    const existing = db.exec(`SELECT name FROM chats WHERE id = '${chatId.replace(/'/g, "''")}'`);
+    if (existing.length === 0 || existing[0].values.length === 0) return false;
+
+    const currentName = existing[0].values[0][0];
+
+    // Only update if current name looks like a phone number and new name doesn't
+    const phonePattern = /^[\d\s+\-()]+$/;
+    if (currentName && phonePattern.test(currentName) && !phonePattern.test(newName)) {
+        const stmt = db.prepare(`UPDATE chats SET name = ? WHERE id = ?`);
+        stmt.run([sanitize(newName), chatId]);
+        stmt.free();
+        saveDatabase();
+        return true;
+    }
+    return false;
+}
+
+// Fix chat names from message sender names (for chats that have phone numbers as names)
+function fixChatNamesFromMessages() {
+    if (!db) return { updated: 0, total: 0 };
+
+    // Get chats with phone number-like names (not groups)
+    const phonePattern = /^[\d\s+\-()]+$/;
+    const chatsResult = db.exec(`SELECT id, name FROM chats WHERE is_group = 0`);
+    if (chatsResult.length === 0) return { updated: 0, total: 0 };
+
+    let updated = 0;
+    const total = chatsResult[0].values.length;
+
+    for (const [chatId, chatName] of chatsResult[0].values) {
+        // Skip if name doesn't look like a phone number
+        if (!chatName || !phonePattern.test(chatName)) continue;
+
+        // Find a sender name from messages in this chat that isn't a phone number
+        const msgResult = db.exec(`
+            SELECT DISTINCT sender_name FROM messages
+            WHERE chat_id = '${chatId.replace(/'/g, "''")}'
+            AND is_from_me = 0
+            AND sender_name IS NOT NULL
+            AND sender_name != 'Unknown'
+            LIMIT 1
+        `);
+
+        if (msgResult.length > 0 && msgResult[0].values.length > 0) {
+            const senderName = msgResult[0].values[0][0];
+            if (senderName && !phonePattern.test(senderName)) {
+                const stmt = db.prepare(`UPDATE chats SET name = ? WHERE id = ?`);
+                stmt.run([senderName, chatId]);
+                stmt.free();
+                updated++;
+            }
+        }
+    }
+
+    if (updated > 0) {
+        saveDatabase();
+    }
+
+    return { updated, total };
 }
 
 // Update unread count for a chat (used when marking as read)
@@ -869,6 +938,8 @@ module.exports = {
     initDatabase,
     saveDatabase,
     insertChat,
+    updateChatNameIfBetter,
+    fixChatNamesFromMessages,
     insertContact,
     insertMessage,
     updateMessageAck,
