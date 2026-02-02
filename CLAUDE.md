@@ -194,6 +194,85 @@ curl -X POST http://100.71.26.11:3000/api/admin/whatsapp/clear-session
 rm -rf .wwebjs_auth
 ```
 
+### Issue 7: Chat names showing phone numbers instead of contact names
+**Symptom**: Chat list displays phone numbers (e.g., "+62 851-7970-1559") instead of contact names (e.g., "Sinar Sengkaling Admin"), even though messages show the correct sender name.
+**Cause**: When chats are synced, contact names may not be available yet. The `fixChatNamesFromMessages()` function used `LIMIT 1` without ordering, returning the oldest message which often has phone number as sender_name instead of the actual contact name.
+**Location**: `database.js` - `fixChatNamesFromMessages()` function
+
+**Fix**: Order messages by timestamp DESC and check multiple results to find a non-phone-number name:
+```javascript
+// Find a sender name from messages that isn't a phone number
+// Order by timestamp DESC to prefer more recent names
+const msgResult = db.exec(`
+    SELECT sender_name FROM messages
+    WHERE chat_id = '${chatId}'
+    AND is_from_me = 0
+    AND sender_name IS NOT NULL
+    AND sender_name != 'Unknown'
+    ORDER BY timestamp DESC
+    LIMIT 10
+`);
+
+// Iterate through results to find first non-phone-number name
+for (const [senderName] of msgResult[0].values) {
+    if (senderName && !phonePattern.test(senderName)) {
+        // Update chat name
+        break;
+    }
+}
+```
+
+**To fix existing chats**:
+```bash
+curl -X POST -b cookies.txt http://100.71.26.11:3000/api/admin/fix-chat-names
+```
+
+### Issue 8: Dashboard stuck on QR page after restart (ready flag not set)
+**Symptom**: After server restart, WhatsApp authenticates successfully but:
+- Dashboard keeps redirecting to QR scan page
+- Status shows `ready: false, stuck: true`
+- Messages NOT being captured (even though auth succeeded)
+
+**Cause**: The `ready` event from whatsapp-web.js never fires after restoring session. This means:
+1. `isReady` flag stays `false` → frontend shows QR page
+2. Event listeners for message capture never attached
+
+**Diagnosis**:
+```bash
+# Check status - look for ready:false with stuck:true
+curl -s http://100.71.26.11:3000/api/status
+# {"ready":false,"loading":true,"qr":null,"stuck":true}
+
+# Check if messages being captured (should show old timestamps if broken)
+ssh BJM "cd C:/Users/BJM/wa-evi && node scripts/db-query.js recent 3"
+
+# Check server logs for "Authentication successful!" without "ready" event
+```
+
+**Fix**: Use the force-ready endpoint which sets the flag AND attaches event listeners:
+```bash
+# Login first
+curl -s -c cookies.txt -X POST http://100.71.26.11:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# Force ready state (attaches message listeners too)
+curl -s -b cookies.txt -X POST http://100.71.26.11:3000/api/admin/whatsapp/force-ready
+# {"success":true,"message":"Ready state forced with event listeners"}
+
+# Verify
+curl -s http://100.71.26.11:3000/api/status
+# {"ready":true,"loading":false,"qr":null,"stuck":false}
+```
+
+**Server logs after fix should show**:
+```
+Force ready state requested by admin
+Force-ready: Manually attaching event listeners...
+Force-ready: Event listeners attached!
+[WA:EVENT:message_create] RECEIVED from=... body=...
+```
+
 ## Chat ID Formats
 
 WhatsApp uses different ID formats:
