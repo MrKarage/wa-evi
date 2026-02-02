@@ -967,6 +967,34 @@ app.post('/api/admin/whatsapp/force-ready', authMiddleware, adminMiddleware, asy
         // Try to attach event listeners for message capture
         try {
             console.log('Force-ready: Manually attaching event listeners...');
+
+            // First, expose the callback function from Node.js to the browser
+            // This allows browser code to call back into Node.js
+            const isExposed = await client.pupPage.evaluate(() => {
+                return typeof window.onAddMessageEvent === 'function';
+            });
+
+            if (!isExposed) {
+                console.log('Force-ready: Exposing onAddMessageEvent callback...');
+                await client.pupPage.exposeFunction('onAddMessageEvent', async (msg) => {
+                    try {
+                        // Import Message class from whatsapp-web.js
+                        const { Message } = require('whatsapp-web.js');
+                        const message = new Message(client, msg);
+                        client.emit('message_create', message);
+                        if (!msg.id.fromMe) {
+                            client.emit('message', message);
+                        }
+                    } catch (e) {
+                        console.error('Force-ready onAddMessageEvent error:', e.message);
+                    }
+                });
+                console.log('Force-ready: onAddMessageEvent exposed!');
+            } else {
+                console.log('Force-ready: onAddMessageEvent already exposed');
+            }
+
+            // Now attach the Store listeners in the browser
             await client.pupPage.evaluate(() => {
                 if (window._waEviListenersAttached) {
                     console.log('Listeners already attached');
