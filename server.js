@@ -968,16 +968,16 @@ app.post('/api/admin/whatsapp/force-ready', authMiddleware, adminMiddleware, asy
         try {
             console.log('Force-ready: Manually attaching event listeners...');
 
-            // First, expose the callback function from Node.js to the browser
-            // This allows browser code to call back into Node.js
+            // Expose our own callback function (use unique name to avoid conflicts)
             const isExposed = await client.pupPage.evaluate(() => {
-                return typeof window.onAddMessageEvent === 'function';
+                return typeof window._waEviMsgCallback === 'function';
             });
 
             if (!isExposed) {
-                console.log('Force-ready: Exposing onAddMessageEvent callback...');
-                await client.pupPage.exposeFunction('onAddMessageEvent', async (msg) => {
+                console.log('Force-ready: Exposing _waEviMsgCallback...');
+                await client.pupPage.exposeFunction('_waEviMsgCallback', async (msg) => {
                     try {
+                        console.log('Force-ready: _waEviMsgCallback received message:', msg.body?.substring(0, 30) || '[media]');
                         // Import Message class from whatsapp-web.js
                         const { Message } = require('whatsapp-web.js');
                         const message = new Message(client, msg);
@@ -986,19 +986,18 @@ app.post('/api/admin/whatsapp/force-ready', authMiddleware, adminMiddleware, asy
                             client.emit('message', message);
                         }
                     } catch (e) {
-                        console.error('Force-ready onAddMessageEvent error:', e.message);
+                        console.error('Force-ready _waEviMsgCallback error:', e.message);
                     }
                 });
-                console.log('Force-ready: onAddMessageEvent exposed!');
+                console.log('Force-ready: _waEviMsgCallback exposed!');
             } else {
-                console.log('Force-ready: onAddMessageEvent already exposed');
+                console.log('Force-ready: _waEviMsgCallback already exposed');
             }
 
-            // Now attach the Store listeners in the browser
-            await client.pupPage.evaluate(() => {
+            // Now attach the Store listeners in the browser using our callback
+            const attached = await client.pupPage.evaluate(() => {
                 if (window._waEviListenersAttached) {
-                    console.log('Listeners already attached');
-                    return;
+                    return 'already_attached';
                 }
                 window._waEviListenersAttached = true;
 
@@ -1006,27 +1005,21 @@ app.post('/api/admin/whatsapp/force-ready', authMiddleware, adminMiddleware, asy
                     if (msg.isNewMsg) {
                         if (msg.type === 'ciphertext') {
                             msg.once('change:type', (_msg) => {
-                                if (window.onAddMessageEvent) {
-                                    window.onAddMessageEvent(window.WWebJS.getMessageModel(_msg));
+                                if (window._waEviMsgCallback) {
+                                    window._waEviMsgCallback(window.WWebJS.getMessageModel(_msg));
                                 }
                             });
                         } else {
-                            if (window.onAddMessageEvent) {
-                                window.onAddMessageEvent(window.WWebJS.getMessageModel(msg));
+                            if (window._waEviMsgCallback) {
+                                window._waEviMsgCallback(window.WWebJS.getMessageModel(msg));
                             }
                         }
                     }
                 });
 
-                window.Store.Msg.on('change:ack', (msg, ack) => {
-                    if (window.onMessageAckEvent) {
-                        window.onMessageAckEvent(window.WWebJS.getMessageModel(msg), ack);
-                    }
-                });
-
-                console.log('Event listeners attached manually');
+                return 'attached';
             });
-            console.log('Force-ready: Event listeners attached!');
+            console.log('Force-ready: Store listeners:', attached);
         } catch (e) {
             console.log('Force-ready: Could not attach event listeners:', e.message);
         }
