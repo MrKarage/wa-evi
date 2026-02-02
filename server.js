@@ -963,8 +963,48 @@ app.post('/api/admin/whatsapp/force-ready', authMiddleware, adminMiddleware, asy
         isReady = true;
         isLoading = false;
         currentQR = null;
+
+        // Try to attach event listeners for message capture
+        try {
+            console.log('Force-ready: Manually attaching event listeners...');
+            await client.pupPage.evaluate(() => {
+                if (window._waEviListenersAttached) {
+                    console.log('Listeners already attached');
+                    return;
+                }
+                window._waEviListenersAttached = true;
+
+                window.Store.Msg.on('add', (msg) => {
+                    if (msg.isNewMsg) {
+                        if (msg.type === 'ciphertext') {
+                            msg.once('change:type', (_msg) => {
+                                if (window.onAddMessageEvent) {
+                                    window.onAddMessageEvent(window.WWebJS.getMessageModel(_msg));
+                                }
+                            });
+                        } else {
+                            if (window.onAddMessageEvent) {
+                                window.onAddMessageEvent(window.WWebJS.getMessageModel(msg));
+                            }
+                        }
+                    }
+                });
+
+                window.Store.Msg.on('change:ack', (msg, ack) => {
+                    if (window.onMessageAckEvent) {
+                        window.onMessageAckEvent(window.WWebJS.getMessageModel(msg), ack);
+                    }
+                });
+
+                console.log('Event listeners attached manually');
+            });
+            console.log('Force-ready: Event listeners attached!');
+        } catch (e) {
+            console.log('Force-ready: Could not attach event listeners:', e.message);
+        }
+
         io.emit('ready');
-        res.json({ success: true, message: 'Ready state forced' });
+        res.json({ success: true, message: 'Ready state forced with event listeners' });
     } catch (err) {
         console.error('Force ready error:', err);
         res.status(500).json({ error: err.message });
