@@ -41,4 +41,27 @@ if (content.includes('GroupQueryAndUpdate(chatWid)')) {
     process.exit(0);
 }
 
-console.log('Could not find code to patch - whatsapp-web.js may have changed');
+console.log('Could not find GroupMetadata code to patch - may have changed');
+
+// PATCH 2: Fix hasSynced race condition (Issue #5758)
+// The ready event doesn't fire if AppState.hasSynced is already true when listeners attach
+const clientPath = path.join(__dirname, '../node_modules/whatsapp-web.js/src/Client.js');
+
+if (fs.existsSync(clientPath)) {
+    let clientContent = fs.readFileSync(clientPath, 'utf8');
+
+    const hasSyncedOriginal = `window.AuthStore.AppState.on('change:hasSynced', () => { window.onAppStateHasSyncedEvent(); });`;
+    const hasSyncedPatched = `// Fix: Check if already synced before attaching listener (Issue #5758)
+            if (window.AuthStore.AppState.hasSynced) { window.onAppStateHasSyncedEvent(); }
+            window.AuthStore.AppState.on('change:hasSynced', () => { window.onAppStateHasSyncedEvent(); });`;
+
+    if (clientContent.includes('// Fix: Check if already synced')) {
+        console.log('hasSynced patch already applied');
+    } else if (clientContent.includes(hasSyncedOriginal)) {
+        clientContent = clientContent.replace(hasSyncedOriginal, hasSyncedPatched);
+        fs.writeFileSync(clientPath, clientContent);
+        console.log('Patched Client.js: Fixed hasSynced race condition');
+    } else {
+        console.log('Could not find hasSynced code to patch');
+    }
+}
