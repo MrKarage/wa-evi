@@ -956,6 +956,21 @@ app.post('/api/admin/whatsapp/restart', authMiddleware, adminMiddleware, async (
     }
 });
 
+// Force ready state (when WhatsApp is working but ready flag is stuck)
+app.post('/api/admin/whatsapp/force-ready', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        console.log('Force ready state requested by admin');
+        isReady = true;
+        isLoading = false;
+        currentQR = null;
+        io.emit('ready');
+        res.json({ success: true, message: 'Ready state forced' });
+    } catch (err) {
+        console.error('Force ready error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Clear session and restart (forces new QR scan)
 app.post('/api/admin/whatsapp/clear-session', authMiddleware, adminMiddleware, async (req, res) => {
     try {
