@@ -331,6 +331,28 @@ pm2 startup                          # Auto-start on boot
 pm2 save                             # Save process list
 ```
 
+### PM2 Process List Empty After Reboot
+
+**Symptom**: `pm2 list` shows empty table after Windows reboot
+
+**Cause**: On Windows, `pm2-windows-startup` only triggers on **user login** (GUI/RDP). SSH connection does NOT count as login.
+
+**Quick Fix** (run via SSH after reboot):
+```bash
+ssh BJM "pm2 resurrect"
+```
+
+**How it works**:
+1. `pm2 save` stores process list in `C:\Users\BJM\.pm2\dump.pm2`
+2. `pm2 resurrect` restores from that dump file
+3. `pm2-windows-startup` calls `pm2 resurrect` on user login
+
+**Health check script**:
+```bash
+# Check if PM2 has processes, resurrect if empty
+ssh BJM "pm2 list | findstr wa-evi || pm2 resurrect"
+```
+
 ## Git Workflow
 
 ```bash
